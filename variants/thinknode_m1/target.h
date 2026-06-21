@@ -40,6 +40,7 @@ extern ThinkNodeM1SensorManager sensors;
 #ifdef DISPLAY_CLASS
   extern DISPLAY_CLASS display;
   extern MomentaryButton user_btn;
+  extern MomentaryButton back_btn;   // second button (PIN_BUTTON2 / GPIO 11), used by ui-elements
 #endif
 
 bool radio_init();
