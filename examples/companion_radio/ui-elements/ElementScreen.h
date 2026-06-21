@@ -24,9 +24,9 @@ protected:
   int         _scroll_y;  // pixel scroll offset into the content column
 
   static const int STATUS_H      = 13;   // top status-bar height
-  static const int DOTS_H        = 6;    // bottom page-dot strip
-  static const int USABLE_BOTTOM = 118;  // e-ink usable logical height
-  static const int SPACING       = 1;    // gap between elements
+  static const int DOTS_H        = 3;    // bottom page-dot strip
+  static const int USABLE_BOTTOM = 126;  // e-ink usable logical height (~2px panel margin)
+  static const int SPACING       = 0;    // gap between elements
 
   int contentTop()    const { return STATUS_H + 1; }
   int contentBottom() const { return USABLE_BOTTOM - DOTS_H; }

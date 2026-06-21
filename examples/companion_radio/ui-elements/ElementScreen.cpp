@@ -119,7 +119,7 @@ void ElementScreen::drawPageDots(DisplayDriver& d) {
   if (n <= 1) return;
   int cur = pageIndex();
   const int spacing = 8;
-  int y = USABLE_BOTTOM - 4;
+  int y = USABLE_BOTTOM - 2;
   int x0 = d.width() / 2 - spacing * (n - 1) / 2;
   d.setColor(DisplayDriver::LIGHT);
   for (int i = 0; i < n; i++) {
