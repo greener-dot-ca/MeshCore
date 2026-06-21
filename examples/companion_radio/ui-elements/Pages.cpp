@@ -17,7 +17,7 @@
 static UITask* T(const UIElement& e) { return (UITask*)e.ctx; }
 
 // ----- Home / shared status getters -----
-static const char* homeBattText(const UIElement& e) {
+static const char* battPctText(const UIElement& e) {
   static char b[8];
   int mv = T(e)->getBattMilliVolts();
   int pct = (mv - BATT_MIN_MILLIVOLTS) * 100 / (BATT_MAX_MILLIVOLTS - BATT_MIN_MILLIVOLTS);
@@ -26,9 +26,21 @@ static const char* homeBattText(const UIElement& e) {
   sprintf(b, "%d%%", pct);
   return b;
 }
-static const char* bleStateText(const UIElement& e) { return T(e)->isSerialEnabled() ? "ON" : "OFF"; }
+static const char* uptimeText(const UIElement&) {
+  static char b[16];
+  unsigned long s = millis() / 1000;
+  int d = s / 86400; s %= 86400;
+  int h = s / 3600;  s %= 3600;
+  int m = s / 60;
+  if (d > 0)      sprintf(b, "%dd %dh", d, h);
+  else if (h > 0) sprintf(b, "%dh %dm", h, m);
+  else            sprintf(b, "%dm", m);
+  return b;
+}
+static const char* chargingText(const UIElement&) {
+  return board.isExternalPowered() ? "Yes" : "No";
+}
 static const char* appConnText(const UIElement& e)  { return T(e)->hasConnection() ? "Connected" : "--"; }
-static const char* gpsStateText(const UIElement& e) { return T(e)->getGPSState() ? "ON" : "OFF"; }
 static const char* unreadText(const UIElement& e) {
   static char b[8]; sprintf(b, "%d", T(e)->getMsgCount()); return b;
 }
@@ -102,6 +114,8 @@ static void bleToggle(const UIElement& e) {
   if (t->isSerialEnabled()) t->disableSerial(); else t->enableSerial();
   t->showAlert(t->isSerialEnabled() ? "BLE: ON" : "BLE: OFF", 800);
 }
+static bool buzzerGet(const UIElement& e)    { return !T(e)->isBuzzerQuiet(); }
+static void buzzerToggle(const UIElement& e) { T(e)->toggleBuzzer(); }
 static void advertCb(const UIElement& e)    { T(e)->doAdvert(); }
 static void hibernateCb(const UIElement& e) { ((ShutdownScreen*)e.ctx)->initShutdown(); }
 
@@ -148,13 +162,15 @@ void SplashScreen::poll() {
 
 // ============================================================ HomeScreen
 HomeScreen::HomeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Home") {
-  _items[0] = makeLabel("Battery",   homeBattText,  task);
-  _items[1] = makeLabel("Bluetooth", bleStateText,  task);
-  _items[2] = makeLabel("App",       appConnText,   task);
-  _items[3] = makeLabel("GPS",       gpsStateText,  task);
-  _items[4] = makeLabel("Fix",       gpsFixText,    task);
-  _items[5] = makeLabel("Unread",    unreadText,    task);
-  _elems = _items; _count = 6;
+  _items[0] = makeLabel(prefs->node_name, nullptr, task);          // node name
+  _items[1] = makeToggle("Buzzer",    task, buzzerGet, buzzerToggle);
+  _items[2] = makeToggle("Bluetooth", task, bleGet,    bleToggle);
+  _items[3] = makeToggle("GPS",       task, gpsGet,    gpsToggle);
+  _items[4] = makeAction("Send Advert", task, advertCb);
+  _items[5] = makeLabel("App",    appConnText, task);
+  _items[6] = makeLabel("Unread", unreadText,  task);
+  _items[7] = makeLabel("Uptime", uptimeText,  task);
+  _elems = _items; _count = 8;
 }
 
 // ============================================================ MeshScreen
@@ -241,9 +257,10 @@ void ShutdownScreen::rebuild() {
     _items[0] = makeLabel("Hibernating...", nullptr, nullptr);
     _elems = _items; _count = 1;
   } else {
-    _items[0] = makeAction("Hibernate", this, hibernateCb);
-    _items[1] = makeLabel("hold btn2 = confirm", nullptr, nullptr);
-    _elems = _items; _count = 2;
+    _items[0] = makeLabel("Battery",  battPctText,  _task);
+    _items[1] = makeLabel("Charging", chargingText, _task);
+    _items[2] = makeAction("Hibernate", this, hibernateCb);
+    _elems = _items; _count = 3;
   }
 }
 

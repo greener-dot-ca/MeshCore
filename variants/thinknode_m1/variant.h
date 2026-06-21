@@ -81,7 +81,7 @@
 #define BUTTON_PIN              PIN_BUTTON1
 #define PIN_USER_BTN            BUTTON_PIN
 
-#define PIN_BUTTON2             (11)
+#define PIN_BUTTON2             (39)   // P1.07 — verified by GPIO scan (was wrongly 11)
 #define BUTTON_PIN2             PIN_BUTTON2
 
 #define EXTERNAL_FLASH_DEVICES MX25R1635F

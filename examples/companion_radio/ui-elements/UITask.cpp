@@ -13,6 +13,7 @@
 #define LED_CYCLE_MILLIS  4000
 #endif
 
+
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display = display;
   _sensors = sensors;
@@ -199,26 +200,37 @@ bool UITask::isButtonPressed() const {
 }
 
 void UITask::loop() {
-  // ---- button 1 (user_btn): page navigation + CLI rescue + buzzer mute ----
+  // ---- button 1 (user_btn / GPIO42): ELEMENT navigation ----
+  //   click        = next element (down)
+  //   long press   = previous element (up)   (or CLI rescue in first 8s)
+  //   double-click = activate / select focused element
+  //   triple-click = toggle buzzer mute
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
-    if (!wakeIfOff() && onPage()) nextPage();
+    if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->focusNext();
   } else if (ev == BUTTON_EVENT_LONG_PRESS) {
     if (millis() - ui_started_at < 8000) {   // rescue window after boot
       the_mesh.enterCLIRescue();
     } else if (!wakeIfOff() && onPage()) {
-      prevPage();
+      ((ElementScreen*)curr)->focusPrev();
     }
+  } else if (ev == BUTTON_EVENT_DOUBLE_CLICK) {
+    if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->activateFocused();
   } else if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
     toggleBuzzer();
   }
 
-  // ---- button 2 (back_btn): element selection + activation ----
+  // ---- button 2 (back_btn / GPIO39): PAGE navigation ----
+  //   click        = next page
+  //   long press   = previous page
+  //   double-click = go to home page
   int ev2 = back_btn.check();
   if (ev2 == BUTTON_EVENT_CLICK) {
-    if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->focusNext();
+    if (!wakeIfOff() && onPage()) nextPage();
   } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
-    if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->activateFocused();
+    if (!wakeIfOff() && onPage()) prevPage();
+  } else if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
+    if (!wakeIfOff() && onPage()) gotoHomeScreen();
   }
 
   if (ev != BUTTON_EVENT_NONE || ev2 != BUTTON_EVENT_NONE) {

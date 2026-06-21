@@ -58,6 +58,15 @@ void ElementScreen::focusNext() {
   }
 }
 
+void ElementScreen::focusPrev() {
+  if (_count <= 0) return;
+  int base = (_focus < 0) ? 0 : _focus;
+  for (int k = 1; k <= _count; k++) {
+    int idx = (((base - k) % _count) + _count) % _count;
+    if (_elems[idx].selectable()) { _focus = idx; ensureFocusVisible(); return; }
+  }
+}
+
 void ElementScreen::activateFocused() {
   if (_focus >= 0 && _focus < _count) _elems[_focus].activate();
 }
@@ -81,20 +90,12 @@ int ElementScreen::drawBattery(DisplayDriver& d) {
   d.fillRect(iconX + iconW, iconH / 4, 3, iconH / 2);
   d.fillRect(iconX + 2, 2, pct * (iconW - 4) / 100, iconH - 4);
 
-  char pcts[6];
-  sprintf(pcts, "%d%%", pct);
-  int pw = d.getTextWidth(pcts);
-  int px = iconX - 3 - pw;
-  d.setColor(DisplayDriver::GREEN);
-  d.setCursor(px, 0);
-  d.print(pcts);
-  int left = px;
-
+  int left = iconX;
 #ifdef PIN_BUZZER
   if (_task->isBuzzerQuiet()) {
     d.setColor(DisplayDriver::RED);
-    d.drawXbm(px - 11, 1, es_muted_icon, 8, 8);
-    left = px - 11;
+    d.drawXbm(iconX - 11, 1, es_muted_icon, 8, 8);
+    left = iconX - 11;
   }
 #endif
   return left;
@@ -142,23 +143,6 @@ void ElementScreen::drawScrollbar(DisplayDriver& d) {
   d.fillRect(x, thumb_y, 2, thumb_h);
 }
 
-void ElementScreen::drawMoreIndicators(DisplayDriver& d, bool up, bool down) {
-  int cx = d.width() / 2;
-  d.setColor(DisplayDriver::LIGHT);
-  if (up) {
-    int y = contentTop();
-    d.fillRect(cx, y, 1, 1);
-    d.fillRect(cx - 1, y + 1, 3, 1);
-    d.fillRect(cx - 2, y + 2, 5, 1);
-  }
-  if (down) {
-    int y = contentBottom() - 3;
-    d.fillRect(cx - 2, y, 5, 1);
-    d.fillRect(cx - 1, y + 1, 3, 1);
-    d.fillRect(cx, y + 2, 1, 1);
-  }
-}
-
 int ElementScreen::render(DisplayDriver& d) {
   rebuild();
   if (_focus >= _count) _focus = (_count > 0) ? _focus % _count : -1;
@@ -170,9 +154,6 @@ int ElementScreen::render(DisplayDriver& d) {
   const bool hasSB = contentHeight() > vp;
   const int cw = d.width() - (hasSB ? 4 : 0);
 
-  const bool more_above = _scroll_y > 0;
-  const bool more_below = (_scroll_y + vp) < contentHeight();
-
   for (int i = 0; i < _count; i++) {
     int et = elemTop(i);
     int eh = _elems[i].height();
@@ -183,7 +164,6 @@ int ElementScreen::render(DisplayDriver& d) {
   }
 
   if (hasSB) drawScrollbar(d);
-  drawMoreIndicators(d, more_above, more_below);
   drawPageDots(d);
 
   return 10000;   // no timer-driven repaint (e-ink: only repaint on interaction)

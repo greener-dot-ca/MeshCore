@@ -39,7 +39,6 @@ protected:
   void drawStatusBar(DisplayDriver& d);
   void drawPageDots(DisplayDriver& d);
   void drawScrollbar(DisplayDriver& d);
-  void drawMoreIndicators(DisplayDriver& d, bool more_above, bool more_below);
 
   virtual void rebuild() {}              // refresh dynamic element set before render
   virtual int  pageIndex() const = 0;
@@ -55,5 +54,6 @@ public:
 
   void resetFocus();        // called when this page becomes current
   void focusNext();         // advance focus to next selectable (wraps)
+  void focusPrev();         // move focus to previous selectable (wraps)
   void activateFocused();   // activate the focused element
 };

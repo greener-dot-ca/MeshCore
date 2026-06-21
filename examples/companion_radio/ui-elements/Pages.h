@@ -28,7 +28,7 @@ public:
 };
 
 class HomeScreen : public ElementScreen {
-  UIElement _items[6];
+  UIElement _items[8];
 protected:
   int pageIndex() const override { return PAGE_HOME; }
   int pageCount() const override { return PAGE_COUNT; }
@@ -92,7 +92,7 @@ public:
 };
 
 class ShutdownScreen : public ElementScreen {
-  UIElement _items[2];
+  UIElement _items[3];
   bool _shutdown_init;
 protected:
   void rebuild() override;
