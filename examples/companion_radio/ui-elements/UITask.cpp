@@ -50,6 +50,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   pages[PAGE_MESH]      = new MeshScreen(this, node_prefs);
   pages[PAGE_GPS]       = new GPSScreen(this, node_prefs);
   pages[PAGE_BLUETOOTH] = new BluetoothScreen(this, node_prefs);
+  pages[PAGE_BUZZ]      = new BuzzScreen(this, node_prefs);
   pages[PAGE_MESSAGES]  = _messages;
   pages[PAGE_SHUTDOWN]  = new ShutdownScreen(this, node_prefs);
 
@@ -68,9 +69,23 @@ void UITask::gotoHomeScreen() {
   setCurrScreen(pages[PAGE_HOME]);
 }
 
-void UITask::openMessage(const MyMesh::MsgView& m) {
-  _detail->setMessage(m);
-  setCurrScreen(_detail);
+void UITask::openMessageAt(int idx) {
+  int total = the_mesh.getDisplayMsgCount();
+  if (total <= 0) return;
+  if (idx < 0) idx = 0;
+  if (idx >= total) idx = total - 1;
+  MyMesh::MsgView v;
+  if (the_mesh.getDisplayMsg(idx, v)) {
+    _detail->setMessage(v, idx, total);
+    setCurrScreen(_detail);
+  }
+}
+
+void UITask::navMessage(int delta) {   // wraps around the list ends
+  int total = the_mesh.getDisplayMsgCount();
+  if (total <= 0) return;
+  int idx = (_detail->index() + delta % total + total) % total;
+  openMessageAt(idx);
 }
 
 void UITask::nextPage() {
@@ -214,13 +229,16 @@ void UITask::loop() {
 
   if (curr == _detail) {
     // ---- read view ----
-    //   triangle  any press   = page down (wraps to top)
+    //   triangle  click       = page down body, then on to the next (older) message
+    //   triangle  hold        = previous (newer) message  (CLI rescue in first 8s)
     //   circle    hold        = back to Messages list (a click won't exit)
     //   circle    double      = Home
     if (ev == BUTTON_EVENT_LONG_PRESS && millis() - ui_started_at < 8000) {
       the_mesh.enterCLIRescue();
+    } else if (ev == BUTTON_EVENT_LONG_PRESS) {
+      if (!wakeIfOff()) navMessage(-1);
     } else if (ev != BUTTON_EVENT_NONE) {
-      if (!wakeIfOff()) _detail->scrollDown();
+      if (!wakeIfOff() && !_detail->scrollDown()) navMessage(+1);
     }
     if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
       if (!wakeIfOff()) gotoHomeScreen();
@@ -270,11 +288,34 @@ void UITask::loop() {
 
   if (curr) curr->poll();
 
-  if (_display != NULL && _display->isOn()) {
+  if (_display != NULL) {
+#if AUTO_OFF_MILLIS > 0
+#ifdef KEEP_DISPLAY_ON_USB
+    if (board.isExternalPowered()) {
+      _auto_off = millis() + AUTO_OFF_MILLIS;
+    }
+#endif
+    // Sleep is backlight-only: e-ink retains its image after turnOff(), so we
+    // kill just the frontlight here and keep refreshing the content below on the
+    // timer (so uptime / message ages stay current while asleep).
+    bool asleep = millis() > _auto_off;
+    if (asleep && _display->isOn()) {
+      _display->turnOff();
+      _next_refresh = 0;   // repaint now so the selection bar disappears immediately
+    }
+#else
+    const bool asleep = false;
+#endif
+
     if (millis() >= _next_refresh && curr) {
+      // hide the selection bar while asleep (visual "screen off" hint); it
+      // returns on the next render once awake.
+      ElementScreen* page = (onPage() && curr != _detail) ? (ElementScreen*)curr : NULL;
+      if (page) page->setFocusVisible(!asleep);
+
       _display->startFrame();
       int delay_millis = curr->render(*_display);
-      if (millis() < _alert_expiry) {  // render alert popup
+      if (!asleep && millis() < _alert_expiry) {  // render alert popup (awake only)
         _display->setTextSize(1);
         int y = _display->height() / 3;
         int p = _display->height() / 32;
@@ -288,27 +329,8 @@ void UITask::loop() {
         _next_refresh = millis() + delay_millis;
       }
       _display->endFrame();
+      if (page) page->setFocusVisible(true);
     }
-#if AUTO_OFF_MILLIS > 0
-#ifdef KEEP_DISPLAY_ON_USB
-    if (board.isExternalPowered()) {
-      _auto_off = millis() + AUTO_OFF_MILLIS;
-    }
-#endif
-    if (millis() > _auto_off) {
-      // e-ink keeps its image after turnOff(), so repaint once with the
-      // selection bar hidden as a visual hint that the screen is asleep.
-      if (onPage() && curr != _detail) {
-        ElementScreen* s = (ElementScreen*)curr;
-        s->setFocusVisible(false);
-        _display->startFrame();
-        s->render(*_display);
-        _display->endFrame();
-        s->setFocusVisible(true);   // restore so the bar returns on wake
-      }
-      _display->turnOff();
-    }
-#endif
   }
 
 #ifdef PIN_VIBRATION

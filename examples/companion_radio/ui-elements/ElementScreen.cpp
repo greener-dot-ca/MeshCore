@@ -1,5 +1,6 @@
 #include "ElementScreen.h"
 #include "UITask.h"
+#include "target.h"   // board.isExternalPowered()
 #include <Arduino.h>
 
 #ifndef BATT_MIN_MILLIVOLTS
@@ -166,5 +167,8 @@ int ElementScreen::render(DisplayDriver& d) {
   if (hasSB) drawScrollbar(d);
   drawPageDots(d);
 
-  return 10000;   // no timer-driven repaint (e-ink: only repaint on interaction)
+  // Wake to re-render on a cadence so time-varying fields (uptime, message
+  // relative ages) stay current: faster on USB, slower on battery. endFrame()
+  // CRC-gates the panel, so a static page costs only an MCU wake, not a refresh.
+  return board.isExternalPowered() ? 10000 : 60000;
 }

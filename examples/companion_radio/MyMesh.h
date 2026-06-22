@@ -109,9 +109,10 @@ public:
   struct MsgView {
     char    sender[32];            // contact or channel name ("?" if unknown)
     char    body[MAX_FRAME_SIZE];  // message text the device has (NUL-terminated)
-    bool    is_channel;
-    bool    is_direct;             // path_len == 0xFF (direct, no flood path)
-    uint8_t hops;                  // flood path length (low 6 bits) when routed
+    bool     is_channel;
+    bool     is_direct;            // path_len == 0xFF (direct, no flood path)
+    uint8_t  hops;                 // flood path length (low 6 bits) when routed
+    uint32_t timestamp;            // sender's epoch timestamp (0 if unknown)
   };
   int  getOfflineQueueLen() const { return offline_queue_len; }
   int  getDisplayMsgCount() const;                    // # of readable text msgs queued

@@ -98,6 +98,11 @@ public :
         if (_pin_reset != -1) {
             digitalWrite(_pin_reset, GPS_RESET_FORCE);
         }
+        // Invalidate the cached fix: a powered-off GPS has no current fix, so
+        // isValid() must not keep returning the stale one (else a later restart
+        // would be treated as an instant new fix).
+        nmea.clear();
+        time_valid = 0;
         release();
     }
 

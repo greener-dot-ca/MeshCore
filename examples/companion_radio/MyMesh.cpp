@@ -300,7 +300,7 @@ bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
       uint8_t channel_idx = buf[p++];
       uint8_t path_len = buf[p++];
       p++;        // txt_type (PLAIN)
-      p += 4;     // sender timestamp
+      memcpy(&out.timestamp, &buf[p], 4); p += 4;   // sender timestamp
       out.is_direct = (path_len == 0xFF);
       out.hops = path_len & 63;
       ChannelDetails ch;
@@ -310,7 +310,7 @@ bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
       const uint8_t* prefix = &buf[p]; p += 6;
       uint8_t path_len = buf[p++];
       p++;        // txt_type
-      p += 4;     // sender timestamp
+      memcpy(&out.timestamp, &buf[p], 4); p += 4;   // sender timestamp
       if (txt_type == TXT_TYPE_SIGNED_PLAIN) p += 4;   // sender_prefix 'extra'
       out.is_direct = (path_len == 0xFF);
       out.hops = path_len & 63;

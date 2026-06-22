@@ -52,6 +52,17 @@ UIElement makeTwoRow(const char* title, void* ctx, ElemTextGetFn body, ElemActiv
   return e;
 }
 
+UIElement makeMessageRow(const char* line, void* ctx, ElemTextGetFn time, ElemActivateFn act) {
+  UIElement e;
+  e.kind = ElemKind::Label;   // Label draw = left text + right value, no glyph
+  e.label = line;
+  e.ctx = ctx;
+  e.get_text = time;          // right-aligned relative time
+  e.on_activate = act;        // still actionable (opens the read view)
+  e.rows = 1;
+  return e;
+}
+
 // ---- type glyphs (drawn with primitives; unicode can't be used because
 // translateUTF8ToBlocks would turn it into a block char) ----
 
@@ -98,7 +109,7 @@ void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const 
     fg = DisplayDriver::DARK;
   }
 
-  const int tx = x + 5;
+  const int tx = x;            // flush to the left edge, same as the status-bar title
   const int ty = y + UIELEM_PAD;
   const int rightX = x + w - 3;
   d.setTextSize(1);

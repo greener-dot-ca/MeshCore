@@ -49,3 +49,6 @@ UIElement makeCycle (const char* label, void* ctx, const char* const* opts, uint
                      ElemOptGetFn get, ElemActivateFn advance);
 // A 2-row read-only element: row1 = title (stable buffer), row2 = body via get_text.
 UIElement makeTwoRow(const char* title, void* ctx, ElemTextGetFn body, ElemActivateFn act = nullptr);
+// A 1-row message row: `line` left (ellipsized), `time` right-aligned via get_text,
+// activatable to open the read view. Uses the Label draw path (no glyph).
+UIElement makeMessageRow(const char* line, void* ctx, ElemTextGetFn time, ElemActivateFn act);

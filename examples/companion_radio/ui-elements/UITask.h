@@ -74,7 +74,8 @@ public:
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
   void gotoHomeScreen();
-  void openMessage(const MyMesh::MsgView& m);   // show the full-message read view
+  void openMessageAt(int idx);   // show the read view for list message `idx`
+  void navMessage(int delta);    // step to another message while in the read view
   void showAlert(const char* text, int duration_millis);
   int  getMsgCount() const { return _msgcount; }
   bool hasDisplay() const { return _display != NULL; }

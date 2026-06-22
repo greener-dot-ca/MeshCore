@@ -5,6 +5,7 @@
 #include "icons.h"
 #include <Arduino.h>
 #include <string.h>
+#include <RTClib.h>   // DateTime for the message read-view timestamp
 
 #ifndef BATT_MIN_MILLIVOLTS
   #define BATT_MIN_MILLIVOLTS 3000
@@ -141,13 +142,26 @@ static void advertCb(const UIElement& e)    { T(e)->doAdvert(); }
 static void hibernateCb(const UIElement& e) { ((ShutdownScreen*)e.ctx)->initShutdown(); }
 
 // ----- message element callbacks -----
-static const char* rowBody(const UIElement& e) {
+static const char* rowTime(const UIElement& e) {   // right-aligned relative time
   MessagesScreen::MsgRef* r = (MessagesScreen::MsgRef*)e.ctx;
-  return r->scr->previewAt(r->idx);
+  return r->scr->timeAt(r->idx);
 }
 static void rowActivate(const UIElement& e) {   // open the full-message read view
   MessagesScreen::MsgRef* r = (MessagesScreen::MsgRef*)e.ctx;
   r->scr->openDetail(r->idx);
+}
+
+// Compact relative age of an epoch timestamp ("now"/"5m"/"3h"/"2d"), into `out`.
+// Empty when the timestamp or the device clock is unusable.
+static void relTime(char* out, size_t cap, uint32_t ts) {
+  out[0] = 0;
+  uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
+  if (ts == 0 || now < ts) return;             // unknown, or clock not yet synced
+  uint32_t s = now - ts;
+  if      (s < 60)    strncpy(out, "now", cap);
+  else if (s < 3600)  snprintf(out, cap, "%lum", (unsigned long)(s / 60));
+  else if (s < 86400) snprintf(out, cap, "%luh", (unsigned long)(s / 3600));
+  else                snprintf(out, cap, "%lud", (unsigned long)(s / 86400));
 }
 
 // ============================================================ SplashScreen
@@ -185,13 +199,12 @@ void SplashScreen::poll() {
 // ============================================================ HomeScreen
 HomeScreen::HomeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Home") {
   _items[0] = makeLabel(prefs->node_name, nullptr, task);          // node name
-  _items[1] = makeToggle("Buzzer",    task, buzzerGet, buzzerToggle);
-  _items[2] = makeToggle("Bluetooth", task, bleGet,    bleToggle);
-  _items[3] = makeToggle("GPS",       task, gpsGet,    gpsToggle);
-  _items[4] = makeLabel("App",    appConnText, task);
-  _items[5] = makeLabel("Unread", unreadText,  task);
-  _items[6] = makeLabel("Uptime", uptimeText,  task);
-  _elems = _items; _count = 7;
+  _items[1] = makeAction("Send Advert", task, advertCb);
+  _items[2] = makeLabel("Messages", unreadText, task);
+  _items[3] = makeLabel("App",      appConnText, task);
+  _items[4] = makeLabel("Uptime",   uptimeText,  task);
+  _items[5] = makeLabel("Queue",    queueText,   task);
+  _elems = _items; _count = 6;
 }
 
 // ============================================================ MeshScreen
@@ -220,16 +233,22 @@ GPSScreen::GPSScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs
 }
 
 // ============================================================ BluetoothScreen
-BluetoothScreen::BluetoothScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Bluetooth") {
+BluetoothScreen::BluetoothScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "BT") {
   _items[0] = makeToggle("Bluetooth", task, bleGet, bleToggle);
   _items[1] = makeLabel("App", appConnText, task);
   _items[2] = makeLabel("Pin", blePinText,  task);
   _elems = _items; _count = 3;
 }
 
+// ============================================================ BuzzScreen
+BuzzScreen::BuzzScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Buzz") {
+  _items[0] = makeToggle("Buzzer", task, buzzerGet, buzzerToggle);
+  _elems = _items; _count = 1;
+}
+
 // ============================================================ MessagesScreen
 MessagesScreen::MessagesScreen(UITask* task, NodePrefs* prefs)
-    : ElementScreen(task, prefs, "Messages") {
+    : ElementScreen(task, prefs, "Msgs") {
   _elems = _items; _count = 0;
 }
 
@@ -245,15 +264,16 @@ void MessagesScreen::rebuild() {
   }
   MyMesh::MsgView v;
   for (int i = 0; i < n; i++) {            // i==0 is newest
-    if (!the_mesh.getDisplayMsg(i, v)) { _rows[i].origin[0] = _rows[i].preview[0] = 0; }
+    if (!the_mesh.getDisplayMsg(i, v)) { _rows[i].line[0] = _rows[i].time[0] = 0; }
     else {
-      if (v.is_direct) snprintf(_rows[i].origin, sizeof(_rows[i].origin), "(D) %s:", v.sender);
-      else             snprintf(_rows[i].origin, sizeof(_rows[i].origin), "(%u) %s:", (unsigned)v.hops, v.sender);
-      strncpy(_rows[i].preview, v.body, sizeof(_rows[i].preview) - 1);
-      _rows[i].preview[sizeof(_rows[i].preview) - 1] = 0;
+      // one line: "Sender: body" ("#Channel: body" for channels), time on the right.
+      // Channel names are already stored with a leading '#', so only add one if absent.
+      const char* hash = (v.is_channel && v.sender[0] != '#') ? "#" : "";
+      snprintf(_rows[i].line, sizeof(_rows[i].line), "%s%s: %s", hash, v.sender, v.body);
+      relTime(_rows[i].time, sizeof(_rows[i].time), v.timestamp);
     }
     _refs[i].scr = this; _refs[i].idx = i;
-    _items[i] = makeTwoRow(_rows[i].origin, &_refs[i], rowBody, rowActivate);
+    _items[i] = makeMessageRow(_rows[i].line, &_refs[i], rowTime, rowActivate);
   }
   int count = n;
   if (total > n) {     // more buffered for the app than we list on-device
@@ -265,8 +285,7 @@ void MessagesScreen::rebuild() {
 }
 
 void MessagesScreen::openDetail(int display_idx) {
-  MyMesh::MsgView v;
-  if (the_mesh.getDisplayMsg(display_idx, v)) _task->openMessage(v);
+  _task->openMessageAt(display_idx);
 }
 
 // ============================================================ MessageDetailScreen
@@ -316,33 +335,51 @@ static int wrapText(DisplayDriver& d, int max_w, const char* text,
   return nl;
 }
 
-static const int MD_BODY_TOP = 14;
+static const int MD_BODY_TOP = 26;   // below the 2-line header (name + date/time)
 static const int MD_BOTTOM   = 124;
 static int mdLinesPerPage() { return (MD_BOTTOM - MD_BODY_TOP) / UIELEM_ROW_H; }
 
-void MessageDetailScreen::scrollDown() {
+bool MessageDetailScreen::scrollDown() {
   int per = mdLinesPerPage();
-  if (_scroll_line + per < _total_lines) _scroll_line += per;
-  else _scroll_line = 0;   // wrap back to the top
+  if (_scroll_line + per < _total_lines) { _scroll_line += per; return true; }
+  return false;   // at the end; caller advances to the next message
 }
 
 int MessageDetailScreen::render(DisplayDriver& d) {
   d.setTextSize(1);
 
-  // header: sender + (D)/hop count, mirroring the status-bar style
-  char origin[40], hdr[48];
-  if (_msg.is_direct) snprintf(origin, sizeof(origin), "(D) %s", _msg.sender);
-  else                snprintf(origin, sizeof(origin), "(%u) %s", (unsigned)_msg.hops, _msg.sender);
+  // header line 1: sender, or "#channel" for a channel message (direction/hops
+  // live in the list, not repeated here)
+  char name[40], hdr[48];
+  // channel names are already stored with a leading '#'; only add one if absent
+  if (_msg.is_channel && _msg.sender[0] != '#') snprintf(name, sizeof(name), "#%s", _msg.sender);
+  else                                          snprintf(name, sizeof(name), "%s", _msg.sender);
   d.setColor(DisplayDriver::GREEN);
-  d.translateUTF8ToBlocks(hdr, origin, sizeof(hdr));
+  d.translateUTF8ToBlocks(hdr, name, sizeof(hdr));
   d.drawTextEllipsized(0, 0, d.width(), hdr);
-  d.setColor(DisplayDriver::LIGHT);
-  d.fillRect(0, 11, d.width(), 1);
 
-  // body, word-wrapped
+  // header line 2: full sender date + time (UTC, like the CLI `clock`)
+  char when[24];
+  if (_msg.timestamp) {
+    static const char* const mon[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                      "Jul","Aug","Sep","Oct","Nov","Dec"};
+    DateTime dt(_msg.timestamp);
+    int m = dt.month();
+    snprintf(when, sizeof(when), "%s %d %02d:%02d",
+             (m >= 1 && m <= 12) ? mon[m - 1] : "?", dt.day(), dt.hour(), dt.minute());
+  } else {
+    strcpy(when, "--");
+  }
+  d.setColor(DisplayDriver::LIGHT);
+  d.setCursor(0, 12);
+  d.print(when);
+  d.fillRect(0, 23, d.width(), 1);
+
+  // body, word-wrapped (reserve a right gutter for the list scrollbar)
+  const int gutter = 4;
   char lines[WRAP_MAX_LINES][WRAP_LINE_CAP];
   char blocks[WRAP_LINE_CAP * 2];
-  _total_lines = wrapText(d, d.width() - 4, _msg.body, lines, WRAP_MAX_LINES);
+  _total_lines = wrapText(d, d.width() - 4 - gutter, _msg.body, lines, WRAP_MAX_LINES);
   if (_scroll_line >= _total_lines) _scroll_line = 0;
 
   const int per = mdLinesPerPage();
@@ -352,15 +389,29 @@ int MessageDetailScreen::render(DisplayDriver& d) {
     d.setCursor(2, MD_BODY_TOP + i * UIELEM_ROW_H);
     d.print(blocks);
   }
-  if (_scroll_line + per < _total_lines) {        // more below: hint at triangle=page-down
-    d.drawTextRightAlign(d.width() - 2, MD_BOTTOM - UIELEM_ROW_H, "v");
+  if (_scroll_line + per < _total_lines) {        // more body below: triangle pages down
+    d.drawTextRightAlign(d.width() - gutter - 1, MD_BOTTOM - UIELEM_ROW_H, "v");
+  }
+
+  // list scrollbar: this message's position in the list (newest at top); triangle
+  // pages through the body then on to the next message.
+  if (_total > 1) {
+    int x = d.width() - 2;
+    int top = MD_BODY_TOP, h = MD_BOTTOM - MD_BODY_TOP;
+    d.setColor(DisplayDriver::LIGHT);
+    d.drawRect(x, top, 1, h);
+    int thumb_h = h / _total;
+    if (thumb_h < 4) thumb_h = 4;
+    if (thumb_h > h) thumb_h = h;
+    int thumb_y = top + _idx * (h - thumb_h) / (_total - 1);
+    d.fillRect(x, thumb_y, 2, thumb_h);
   }
   return 10000;   // e-ink: repaint only on interaction
 }
 
 // ============================================================ ShutdownScreen
 ShutdownScreen::ShutdownScreen(UITask* task, NodePrefs* prefs)
-    : ElementScreen(task, prefs, "Power"), _shutdown_init(false) {
+    : ElementScreen(task, prefs, "Pwr"), _shutdown_init(false) {
   _elems = _items; _count = 0;
 }
 
