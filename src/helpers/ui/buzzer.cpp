@@ -16,10 +16,8 @@ void genericBuzzer::begin() {
 }
 
 void genericBuzzer::play(const char *melody) {
-    if (isPlaying())   // interrupt existing
-    {
-        rtttl::stop();
-    }
+    if (rtttl::isPlaying()) rtttl::stop();    // interrupt existing
+    if (_seq_active) { noTone(PIN_BUZZER); _seq_active = false; }
 
     if (_is_quiet) return;
 
@@ -28,11 +26,36 @@ void genericBuzzer::play(const char *melody) {
 //    Serial.println(isQuiet());
 }
 
+void genericBuzzer::startSeg() {
+    const ToneSeg &s = _segs[_seg_idx];
+    if (s.freq) tone(PIN_BUZZER, s.freq); else noTone(PIN_BUZZER);
+    _seg_until = millis() + s.ms;
+}
+
+void genericBuzzer::playTones(const ToneSeg *segs, uint8_t n) {
+    if (rtttl::isPlaying()) rtttl::stop();    // interrupt existing
+    if (_is_quiet || n == 0) return;
+
+    if (n > MAX_SEGS) n = MAX_SEGS;
+    memcpy(_segs, segs, n * sizeof(ToneSeg));
+    _seg_count = n;
+    _seg_idx = 0;
+    _seq_active = true;
+    startSeg();
+}
+
 bool genericBuzzer::isPlaying() {
-    return rtttl::isPlaying();
+    return _seq_active || rtttl::isPlaying();
 }
 
 void genericBuzzer::loop() {
+    if (_seq_active) {
+        if (millis() >= _seg_until) {
+            if (++_seg_idx >= _seg_count) { noTone(PIN_BUZZER); _seq_active = false; }
+            else startSeg();
+        }
+        return;
+    }
     if (!rtttl::done()) rtttl::play();
 }
 
@@ -46,6 +69,10 @@ void genericBuzzer::shutdown() {
 
 void genericBuzzer::quiet(bool buzzer_state) {
     _is_quiet = buzzer_state;
+    if (_is_quiet) {   // cut any sound in progress
+        if (rtttl::isPlaying()) rtttl::stop();
+        if (_seq_active) { noTone(PIN_BUZZER); _seq_active = false; }
+    }
 #ifdef PIN_BUZZER_EN
     if (_is_quiet) {
       digitalWrite(PIN_BUZZER_EN, LOW);

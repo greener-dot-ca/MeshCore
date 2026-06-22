@@ -41,6 +41,16 @@ UIElement makeCycle(const char* label, void* ctx, const char* const* opts, uint8
   return e;
 }
 
+UIElement makeCycleText(const char* label, void* ctx, ElemTextGetFn get_text, ElemActivateFn advance) {
+  UIElement e;
+  e.kind = ElemKind::OptionCycle;   // draw() uses get_text for the value (no option list)
+  e.label = label;
+  e.ctx = ctx;
+  e.get_text = get_text;
+  e.on_activate = advance;
+  return e;
+}
+
 UIElement makeTwoRow(const char* title, void* ctx, ElemTextGetFn body, ElemActivateFn act) {
   UIElement e;
   e.kind = act ? ElemKind::Action : ElemKind::Label;
@@ -71,22 +81,15 @@ static void glyphCheckbox(DisplayDriver& d, int x, int y, bool on) {
   d.drawRect(x, y, 9, 9);
   if (on) d.fillRect(x + 2, y + 2, 5, 5);
 }
-// filled triangle pointing right (vertical base at left, apex at right)
-static void glyphTriRight(DisplayDriver& d, int x, int y, int s) {
-  for (int r = 0; r < s; r++) {
-    int dist = (r < s / 2) ? (s / 2 - r) : (r - s / 2);
-    int len = (s / 2 - dist) + 1;
-    d.fillRect(x, y + r, len, 1);
-  }
+// filled cycle arrows, drawn as XBMs (8x9) -- stacked 1px fillRects stripe on
+// the e-ink scaler, the same reason glyphPlay below uses an XBM.
+static void glyphTriRight(DisplayDriver& d, int x, int y, int) {   // ► apex right
+  static const uint8_t icon[] = { 0x80, 0xC0, 0xF0, 0xFC, 0xFF, 0xFC, 0xF0, 0xC0, 0x80 };
+  d.drawXbm(x, y, icon, 8, 9);
 }
-// filled triangle pointing left (vertical base at right, apex at left)
-static void glyphTriLeft(DisplayDriver& d, int x, int y, int s) {
-  int base = x + s / 2;
-  for (int r = 0; r < s; r++) {
-    int dist = (r < s / 2) ? (s / 2 - r) : (r - s / 2);
-    int len = (s / 2 - dist) + 1;
-    d.fillRect(base - (len - 1), y + r, len, 1);
-  }
+static void glyphTriLeft(DisplayDriver& d, int x, int y, int) {    // ◄ apex left
+  static const uint8_t icon[] = { 0x01, 0x03, 0x0F, 0x3F, 0xFF, 0x3F, 0x0F, 0x03, 0x01 };
+  d.drawXbm(x, y, icon, 8, 9);
 }
 // filled play triangle (8x9, base left, apex right). Drawn as an XBM so the
 // e-ink scaler fills the inter-pixel gaps (stacked 1px fillRects would stripe).
@@ -130,7 +133,7 @@ void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const 
 
   // single-row: caption on the left, a type glyph (+ value) on the right
   int label_right = rightX;
-  const int ts = 7;   // triangle size
+  const int ts = 8;   // cycle-arrow glyph width
 
   switch (kind) {
     case ElemKind::Toggle: {
@@ -158,12 +161,12 @@ void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const 
       d.translateUTF8ToBlocks(vbuf, (val && val[0]) ? val : "", sizeof(vbuf));
       int vw = d.getTextWidth(vbuf);
       d.setColor(fg);
-      glyphTriRight(d, rightX - ts, ty + 1, ts);          // ►
+      glyphTriRight(d, rightX - ts, ty + 2, ts);          // ►
       int valx = rightX - ts - 2 - vw;
       d.setColor(fg);
       d.setCursor(valx, ty);
       d.print(vbuf);
-      glyphTriLeft(d, valx - 2 - ts, ty + 1, ts);         // ◄
+      glyphTriLeft(d, valx - 2 - ts, ty + 2, ts);         // ◄
       label_right = valx - 2 - ts - 3;
       break;
     }

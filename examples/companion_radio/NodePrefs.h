@@ -25,6 +25,9 @@ struct NodePrefs {  // persisted to file
   uint32_t ble_pin;
   uint8_t  advert_loc_policy;
   uint8_t  buzzer_quiet;
+  uint8_t  buzzer_mode;      // notification sound: 0=CTU ring, 1=beep, 2=morse hop count
+  uint8_t  time_format;      // displayed clock: 0=24h, 1=12h
+  int16_t  utc_offset_min;   // displayed-time offset from UTC, in minutes (signed)
   uint8_t  gps_enabled;      // GPS enabled flag (0=disabled, 1=enabled)
   uint32_t gps_interval;     // GPS read interval in seconds
   uint8_t autoadd_config;    // bitmask for auto-add contacts config

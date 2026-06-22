@@ -2,6 +2,37 @@
 #include "UITask.h"
 #include "target.h"   // board.isExternalPowered()
 #include <Arduino.h>
+#include <RTClib.h>   // DateTime for the status-bar clock
+
+// ---- shared time formatting (honors time_format + utc_offset_min) ----
+static void fmtTimePart(NodePrefs* p, const DateTime& dt, char* out, size_t n) {
+  int h = dt.hour(), m = dt.minute();
+  if (p && p->time_format == 1) {            // 12-hour
+    int h12 = h % 12; if (h12 == 0) h12 = 12;
+    snprintf(out, n, "%d:%02d%c", h12, m, h < 12 ? 'a' : 'p');
+  } else {                                   // 24-hour
+    snprintf(out, n, "%02d:%02d", h, m);
+  }
+}
+
+void uiFormatClock(NodePrefs* p, uint32_t epoch, char* out, size_t n) {
+  if (epoch == 0) { strncpy(out, "--:--", n); out[n - 1] = 0; return; }
+  uint32_t local = (uint32_t)((int64_t)epoch + (int64_t)(p ? p->utc_offset_min : 0) * 60);
+  DateTime dt(local);
+  fmtTimePart(p, dt, out, n);
+}
+
+void uiFormatDateTime(NodePrefs* p, uint32_t epoch, char* out, size_t n) {
+  if (epoch == 0) { strncpy(out, "--", n); out[n - 1] = 0; return; }
+  static const char* const mon[] = {"Jan","Feb","Mar","Apr","May","Jun",
+                                    "Jul","Aug","Sep","Oct","Nov","Dec"};
+  uint32_t local = (uint32_t)((int64_t)epoch + (int64_t)(p ? p->utc_offset_min : 0) * 60);
+  DateTime dt(local);
+  int mo = dt.month();
+  char t[12];
+  fmtTimePart(p, dt, t, sizeof(t));
+  snprintf(out, n, "%s %d %s", (mo >= 1 && mo <= 12) ? mon[mo - 1] : "?", dt.day(), t);
+}
 
 #ifndef BATT_MIN_MILLIVOLTS
   #define BATT_MIN_MILLIVOLTS 3000
@@ -10,9 +41,18 @@
   #define BATT_MAX_MILLIVOLTS 4200
 #endif
 
-// small 8x8 "muted" glyph (same data as ui-new icons.h)
-static const uint8_t es_muted_icon[] = {
+// small 8x8 status glyphs (XBM so the e-ink scaler doesn't stripe them)
+static const uint8_t es_muted_icon[] = {        // buzzer muted
   0x20, 0x6a, 0xea, 0xe4, 0xe4, 0xea, 0x6a, 0x20
+};
+static const uint8_t es_bt_icon[] = {           // bluetooth rune
+  0x10, 0x18, 0x54, 0x38, 0x38, 0x54, 0x18, 0x10
+};
+static const uint8_t es_gps_icon[] = {          // location pin
+  0x38, 0x44, 0x54, 0x44, 0x28, 0x10, 0x10, 0x00
+};
+static const uint8_t es_bolt_icon[] = {         // charging lightning bolt
+  0x0c, 0x18, 0x30, 0x7c, 0x18, 0x30, 0x60, 0x00
 };
 
 int ElementScreen::elemTop(int idx) const {
@@ -78,38 +118,54 @@ bool ElementScreen::handleInput(char c) {
   return false;
 }
 
-int ElementScreen::drawBattery(DisplayDriver& d) {
+// Draws a small battery whose terminal nub ends at x==`right`; returns its left x
+// (or the bolt's left x when charging).
+int ElementScreen::drawBattery(DisplayDriver& d, int right) {
   uint16_t mv = _task->getBattMilliVolts();
   int pct = ((int)mv - BATT_MIN_MILLIVOLTS) * 100 / (BATT_MAX_MILLIVOLTS - BATT_MIN_MILLIVOLTS);
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
 
-  const int iconW = 24, iconH = 10;
-  int iconX = d.width() - iconW - 4;
+  const int iconW = 14, iconH = 8, y = 1;
+  int x = right - 2 - iconW;            // 2px for the terminal nub at `right`
   d.setColor(DisplayDriver::GREEN);
-  d.drawRect(iconX, 0, iconW, iconH);
-  d.fillRect(iconX + iconW, iconH / 4, 3, iconH / 2);
-  d.fillRect(iconX + 2, 2, pct * (iconW - 4) / 100, iconH - 4);
+  d.drawRect(x, y, iconW, iconH);
+  d.fillRect(x + iconW, y + iconH / 4, 2, iconH / 2);          // terminal nub
+  d.fillRect(x + 2, y + 2, pct * (iconW - 4) / 100, iconH - 4); // fill
 
-  int left = iconX;
-#ifdef PIN_BUZZER
-  if (_task->isBuzzerQuiet()) {
-    d.setColor(DisplayDriver::RED);
-    d.drawXbm(iconX - 11, 1, es_muted_icon, 8, 8);
-    left = iconX - 11;
+  int left = x;
+  if (board.isExternalPowered()) {     // charging: lightning bolt left of battery
+    d.drawXbm(x - 9, y, es_bolt_icon, 8, 8);
+    left = x - 9;
   }
-#endif
   return left;
 }
 
 void ElementScreen::drawStatusBar(DisplayDriver& d) {
   d.setTextSize(1);
-  int left = drawBattery(d);
 
-  d.setColor(DisplayDriver::GREEN);
-  char title[40];
+  // right side: clock (rightmost), then battery (+charge bolt) to its left
+  char clk[12];
+  uiFormatClock(_prefs, _task->currentEpoch(), clk, sizeof(clk));
+  int cw = d.getTextWidth(clk);
+  d.setColor(DisplayDriver::LIGHT);
+  d.drawTextRightAlign(d.width(), 0, clk);
+  drawBattery(d, d.width() - cw - 3);
+
+  // left side: title
+  char title[24];
   d.translateUTF8ToBlocks(title, _title ? _title : "", sizeof(title));
-  d.drawTextEllipsized(0, 0, left - 2, title);
+  d.setColor(DisplayDriver::GREEN);
+  d.setCursor(0, 0);
+  d.print(title);
+  int ix = d.getTextWidth(title) + 4;     // status icons follow the title
+
+  // status icons: BT (connected), GPS (on), buzzer muted
+  if (_task->hasConnection()) { d.setColor(DisplayDriver::LIGHT); d.drawXbm(ix, 1, es_bt_icon, 8, 8); ix += 9; }
+  if (_task->getGPSState())   { d.setColor(DisplayDriver::LIGHT); d.drawXbm(ix, 1, es_gps_icon, 8, 8); ix += 9; }
+#ifdef PIN_BUZZER
+  if (_task->isBuzzerQuiet()) { d.setColor(DisplayDriver::RED);   d.drawXbm(ix, 1, es_muted_icon, 8, 8); ix += 9; }
+#endif
 
   d.setColor(DisplayDriver::LIGHT);
   d.fillRect(0, STATUS_H - 2, d.width(), 1);   // separator at y=11
@@ -120,13 +176,13 @@ void ElementScreen::drawPageDots(DisplayDriver& d) {
   if (n <= 1) return;
   int cur = pageIndex();
   const int spacing = 8;
-  int y = USABLE_BOTTOM - 2;
+  int cy = USABLE_BOTTOM - 3;
   int x0 = d.width() / 2 - spacing * (n - 1) / 2;
   d.setColor(DisplayDriver::LIGHT);
   for (int i = 0; i < n; i++) {
     int cx = x0 + i * spacing;
-    if (i == cur) d.fillRect(cx - 1, y - 1, 3, 3);
-    else          d.fillRect(cx, y, 1, 1);
+    if (i == cur) d.fillRect(cx - 2, cy - 2, 5, 5);   // current page: a bit larger
+    else          d.fillRect(cx - 1, cy - 1, 3, 3);   // other pages: same base size
   }
 }
 
@@ -153,7 +209,7 @@ int ElementScreen::render(DisplayDriver& d) {
   const int top = contentTop();
   const int vp = viewportH();
   const bool hasSB = contentHeight() > vp;
-  const int cw = d.width() - (hasSB ? 4 : 0);
+  const int cw = d.width() - 4;   // always reserve the scrollbar gutter so content doesn't reflow
 
   for (int i = 0; i < _count; i++) {
     int et = elemTop(i);

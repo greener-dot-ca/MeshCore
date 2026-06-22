@@ -129,6 +129,13 @@ const char* ThinkNodeM1SensorManager::getSettingValue(int i) const {
 
 bool ThinkNodeM1SensorManager::setSettingValue(const char* name, const char* value) {
   if (strcmp(name, "gps") == 0) {
+    if (!gps_boot_synced) {
+      // first set on boot (applyGpsPrefs) ignores the saved pref: GPS follows
+      // the physical switch instead. Later UI/CLI sets work normally.
+      gps_boot_synced = true;
+      if (digitalRead(PIN_GPS_SWITCH) == HIGH) start_gps(); else stop_gps();
+      return true;
+    }
     if (strcmp(value, "0") == 0) {
       stop_gps();
     } else {

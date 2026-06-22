@@ -53,7 +53,16 @@ class UITask : public AbstractUITask {
   MessagesScreen*      _messages;
   MessageDetailScreen* _detail;
 
+  // a new message pops up in the read view for ~10s, then returns to _revert_*
+  UIScreen*            _revert_screen = NULL;
+  int                  _revert_page = 0;
+  unsigned long        _revert_at = 0;   // 0 = no pending auto-return
+
   void userLedHandler();
+  void playMsgSound(uint8_t path_len);   // play the configured notification sound
+#if defined(PIN_BUZZER)
+  void playMorseHops(uint8_t path_len);  // morse the hop count at 440Hz
+#endif
   void setCurrScreen(UIScreen* c);
   void nextPage();
   void prevPage();
@@ -78,6 +87,7 @@ public:
   void navMessage(int delta);    // step to another message while in the read view
   void showAlert(const char* text, int duration_millis);
   int  getMsgCount() const { return _msgcount; }
+  uint32_t currentEpoch() const;   // device clock (UTC epoch secs, 0 if unset)
   bool hasDisplay() const { return _display != NULL; }
   bool isButtonPressed() const;
 
@@ -91,6 +101,16 @@ public:
 
   // actions invoked by page elements
   void toggleBuzzer();
+  uint8_t getBuzzerMode() const { return _node_prefs ? _node_prefs->buzzer_mode : 0; }
+  void setBuzzerMode(uint8_t m);   // persist + play a preview
+
+  // displayed-time settings (Time page)
+  uint8_t getTimeFormat() const { return _node_prefs ? _node_prefs->time_format : 0; }
+  void setTimeFormat(uint8_t f);                          // persist
+  int16_t getUtcOffsetMin() const { return _node_prefs ? _node_prefs->utc_offset_min : 0; }
+  void setUtcOffsetMin(int16_t m);                        // persist
+  void formatClock(char* out, size_t n) const;           // current local time, formatted
+  void formatDateTime(uint32_t epoch, char* out, size_t n) const;
   bool getGPSState();
   void toggleGPS();
   void doAdvert();

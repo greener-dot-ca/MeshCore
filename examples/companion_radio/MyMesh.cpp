@@ -303,6 +303,7 @@ bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
       memcpy(&out.timestamp, &buf[p], 4); p += 4;   // sender timestamp
       out.is_direct = (path_len == 0xFF);
       out.hops = path_len & 63;
+      out.path_len = path_len;
       ChannelDetails ch;
       if (getChannel(channel_idx, ch)) StrHelper::strncpy(out.sender, ch.name, sizeof(out.sender));
       else strcpy(out.sender, "Unknown");
@@ -314,6 +315,7 @@ bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
       if (txt_type == TXT_TYPE_SIGNED_PLAIN) p += 4;   // sender_prefix 'extra'
       out.is_direct = (path_len == 0xFF);
       out.hops = path_len & 63;
+      out.path_len = path_len;
       ContactInfo* c = lookupContactByPubKey(prefix, 6);
       if (c) StrHelper::strncpy(out.sender, c->name, sizeof(out.sender));
       else strcpy(out.sender, "?");

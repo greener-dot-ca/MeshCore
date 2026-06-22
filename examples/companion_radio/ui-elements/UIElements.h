@@ -47,6 +47,8 @@ UIElement makeToggle(const char* label, void* ctx, ElemBoolGetFn get, ElemActiva
 UIElement makeAction(const char* label, void* ctx, ElemActivateFn act);
 UIElement makeCycle (const char* label, void* ctx, const char* const* opts, uint8_t n,
                      ElemOptGetFn get, ElemActivateFn advance);
+// A cycle whose value text is computed dynamically (no fixed option list).
+UIElement makeCycleText(const char* label, void* ctx, ElemTextGetFn get_text, ElemActivateFn advance);
 // A 2-row read-only element: row1 = title (stable buffer), row2 = body via get_text.
 UIElement makeTwoRow(const char* title, void* ctx, ElemTextGetFn body, ElemActivateFn act = nullptr);
 // A 1-row message row: `line` left (ellipsized), `time` right-aligned via get_text,

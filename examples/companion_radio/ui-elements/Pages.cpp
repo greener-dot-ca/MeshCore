@@ -138,6 +138,30 @@ static void bleToggle(const UIElement& e) {
 }
 static bool buzzerGet(const UIElement& e)    { return !T(e)->isBuzzerQuiet(); }
 static void buzzerToggle(const UIElement& e) { T(e)->toggleBuzzer(); }
+static const char* const buzzModeOpts[] = { "CTU", "Beep", "Morse" };
+static int  buzzModeGet(const UIElement& e)  { return T(e)->getBuzzerMode(); }
+static void buzzModeNext(const UIElement& e) { T(e)->setBuzzerMode(T(e)->getBuzzerMode() + 1); }
+
+// ----- time page callbacks -----
+static const char* const timeFmtOpts[] = { "24h", "12h" };
+static int  timeFmtGet(const UIElement& e)  { return T(e)->getTimeFormat(); }
+static void timeFmtNext(const UIElement& e) { T(e)->setTimeFormat((T(e)->getTimeFormat() + 1) & 1); }
+static const char* clockText(const UIElement& e) {
+  static char b[12]; T(e)->formatClock(b, sizeof(b)); return b;
+}
+static const char* utcOffsetText(const UIElement& e) {   // "UTC" / "+5:30" / "-8:00"
+  static char b[10];
+  int m = T(e)->getUtcOffsetMin();
+  if (m == 0) { strcpy(b, "UTC"); return b; }
+  int a = m < 0 ? -m : m;
+  snprintf(b, sizeof(b), "%c%d:%02d", m < 0 ? '-' : '+', a / 60, a % 60);
+  return b;
+}
+static void utcOffsetNext(const UIElement& e) {          // step +30 min, wrap -12:00..+14:00
+  int m = T(e)->getUtcOffsetMin() + 30;
+  if (m > 840) m = -720;
+  T(e)->setUtcOffsetMin((int16_t)m);
+}
 static void advertCb(const UIElement& e)    { T(e)->doAdvert(); }
 static void hibernateCb(const UIElement& e) { ((ShutdownScreen*)e.ctx)->initShutdown(); }
 
@@ -201,10 +225,9 @@ HomeScreen::HomeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, pre
   _items[0] = makeLabel(prefs->node_name, nullptr, task);          // node name
   _items[1] = makeAction("Send Advert", task, advertCb);
   _items[2] = makeLabel("Messages", unreadText, task);
-  _items[3] = makeLabel("App",      appConnText, task);
-  _items[4] = makeLabel("Uptime",   uptimeText,  task);
-  _items[5] = makeLabel("Queue",    queueText,   task);
-  _elems = _items; _count = 6;
+  _items[3] = makeLabel("Uptime",   uptimeText,  task);
+  _items[4] = makeLabel("Queue",    queueText,   task);
+  _elems = _items; _count = 5;     // BT/conn now shown as a status-bar icon
 }
 
 // ============================================================ MeshScreen
@@ -243,7 +266,16 @@ BluetoothScreen::BluetoothScreen(UITask* task, NodePrefs* prefs) : ElementScreen
 // ============================================================ BuzzScreen
 BuzzScreen::BuzzScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Buzz") {
   _items[0] = makeToggle("Buzzer", task, buzzerGet, buzzerToggle);
-  _elems = _items; _count = 1;
+  _items[1] = makeCycle("Sound", task, buzzModeOpts, 3, buzzModeGet, buzzModeNext);
+  _elems = _items; _count = 2;
+}
+
+// ============================================================ TimeScreen
+TimeScreen::TimeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Time") {
+  _items[0] = makeLabel("Time", clockText, task);                       // current local time
+  _items[1] = makeCycle("Format", task, timeFmtOpts, 2, timeFmtGet, timeFmtNext);
+  _items[2] = makeCycleText("UTC", task, utcOffsetText, utcOffsetNext);
+  _elems = _items; _count = 3;
 }
 
 // ============================================================ MessagesScreen
@@ -292,43 +324,57 @@ void MessagesScreen::openDetail(int display_idx) {
 #define WRAP_MAX_LINES 24
 #define WRAP_LINE_CAP  48
 
-// Greedy word-wrap of `text` to `max_w` pixels into lines[]. Returns line count.
-// Widths are measured on the block-translated candidate (matches how lines draw).
-static int wrapText(DisplayDriver& d, int max_w, const char* text,
+// Greedy word-wrap of `g` to `max_w` pixels into lines[]. Returns line count.
+// `g` is already display-glyph text (1 byte per glyph, via translateUTF8ToBlocks)
+// so widths measure exactly as drawn and breaks never split a UTF-8 sequence.
+// Words longer than the line are hard-broken so nothing ever overruns the width.
+static int wrapText(DisplayDriver& d, int max_w, const char* g,
                     char lines[][WRAP_LINE_CAP], int max_lines) {
-  int nl = 0; size_t li = 0;
+  int nl = 0, li = 0;
   lines[0][0] = 0;
-  char blocks[WRAP_LINE_CAP * 2];
-  const char* p = text;
+  char cand[WRAP_LINE_CAP + 2];
+  const char* p = g;
   while (*p && nl < max_lines) {
     if (*p == '\n') {                                   // explicit break
       lines[nl][li] = 0;
-      if (++nl < max_lines) { lines[nl][0] = 0; li = 0; }
+      if (++nl < max_lines) { li = 0; lines[nl][0] = 0; }
       p++; continue;
     }
-    const char* ws = p;                                 // next word
-    while (*p && *p != ' ' && *p != '\n') p++;
-    size_t wlen = p - ws;
-    if (wlen >= WRAP_LINE_CAP) wlen = WRAP_LINE_CAP - 1; // clamp a monster word
+    while (*p == ' ') p++;                              // collapse run of spaces
+    if (!*p || *p == '\n') continue;
 
-    bool wrap = false;
-    if (li + wlen >= WRAP_LINE_CAP) {
-      wrap = (li > 0);
-    } else if (li > 0) {
-      char cand[WRAP_LINE_CAP];
-      memcpy(cand, lines[nl], li); memcpy(cand + li, ws, wlen); cand[li + wlen] = 0;
-      d.translateUTF8ToBlocks(blocks, cand, sizeof(blocks));
-      if ((int)d.getTextWidth(blocks) > max_w) wrap = true;
-    }
-    if (wrap) {
-      lines[nl][li] = 0;
-      if (++nl >= max_lines) break;
-      li = 0; lines[nl][0] = 0;
-    }
-    memcpy(lines[nl] + li, ws, wlen); li += wlen; lines[nl][li] = 0;
-    while (*p == ' ') {                                  // keep spaces, not at line start
-      if (li > 0 && li < WRAP_LINE_CAP - 1) { lines[nl][li++] = ' '; lines[nl][li] = 0; }
-      p++;
+    const char* w = p;                                 // next word
+    while (*p && *p != ' ' && *p != '\n') p++;
+    int wlen = (int)(p - w), wi = 0;
+
+    while (wi < wlen && nl < max_lines) {               // place word, splitting if needed
+      bool space = (li > 0);                            // separate from prior word
+      int fit = 0;                                      // word chars that fit on this line
+      while (wi + fit < wlen && li + (space ? 1 : 0) + fit < WRAP_LINE_CAP - 1) {
+        int t = li;
+        memcpy(cand, lines[nl], li);
+        if (space) cand[t++] = ' ';
+        memcpy(cand + t, w + wi, fit + 1);
+        cand[t + fit + 1] = 0;
+        if ((int)d.getTextWidth(cand) > max_w) break;
+        fit++;
+      }
+      if (fit == 0) {                                   // nothing more fits on this line
+        if (li == 0) {                                  // ... and the line is empty: force 1 char
+          lines[nl][0] = w[wi++]; lines[nl][1] = 0; li = 1;
+        }
+        if (++nl >= max_lines) break;
+        li = 0; lines[nl][0] = 0;
+      } else {
+        if (space) lines[nl][li++] = ' ';
+        memcpy(lines[nl] + li, w + wi, fit);
+        li += fit; lines[nl][li] = 0;
+        wi += fit;
+        if (wi < wlen) {                                // word continues on the next line
+          if (++nl >= max_lines) break;
+          li = 0; lines[nl][0] = 0;
+        }
+      }
     }
   }
   if (li > 0 && nl < max_lines) { lines[nl][li] = 0; nl++; }
@@ -358,36 +404,35 @@ int MessageDetailScreen::render(DisplayDriver& d) {
   d.translateUTF8ToBlocks(hdr, name, sizeof(hdr));
   d.drawTextEllipsized(0, 0, d.width(), hdr);
 
-  // header line 2: full sender date + time (UTC, like the CLI `clock`)
-  char when[24];
-  if (_msg.timestamp) {
-    static const char* const mon[] = {"Jan","Feb","Mar","Apr","May","Jun",
-                                      "Jul","Aug","Sep","Oct","Nov","Dec"};
-    DateTime dt(_msg.timestamp);
-    int m = dt.month();
-    snprintf(when, sizeof(when), "%s %d %02d:%02d",
-             (m >= 1 && m <= 12) ? mon[m - 1] : "?", dt.day(), dt.hour(), dt.minute());
+  // header line 2: "<date> - <route>" (date honors the Time page format + offset)
+  char date[24], when[40];
+  _task->formatDateTime(_msg.timestamp, date, sizeof(date));
+  if (_msg.is_direct) {
+    snprintf(when, sizeof(when), "%s - Direct", date);
   } else {
-    strcpy(when, "--");
+    // "date - <hops>h - <bytes-per-repeater-hash>b" (hash size = top 2 bits of path_len)
+    unsigned hash_bytes = (_msg.path_len >> 6) + 1;
+    snprintf(when, sizeof(when), "%s - %uh - %ub", date, (unsigned)_msg.hops, hash_bytes);
   }
   d.setColor(DisplayDriver::LIGHT);
   d.setCursor(0, 12);
   d.print(when);
   d.fillRect(0, 23, d.width(), 1);
 
-  // body, word-wrapped (reserve a right gutter for the list scrollbar)
+  // body, word-wrapped (reserve a right gutter for the list scrollbar). Translate
+  // to display glyphs once so wrap widths match drawing and breaks are UTF-8 safe.
   const int gutter = 4;
   char lines[WRAP_MAX_LINES][WRAP_LINE_CAP];
-  char blocks[WRAP_LINE_CAP * 2];
-  _total_lines = wrapText(d, d.width() - 4 - gutter, _msg.body, lines, WRAP_MAX_LINES);
+  char body_glyphs[MAX_FRAME_SIZE];
+  d.translateUTF8ToBlocks(body_glyphs, _msg.body, sizeof(body_glyphs));
+  _total_lines = wrapText(d, d.width() - 4 - gutter, body_glyphs, lines, WRAP_MAX_LINES);
   if (_scroll_line >= _total_lines) _scroll_line = 0;
 
   const int per = mdLinesPerPage();
   d.setColor(DisplayDriver::LIGHT);
   for (int i = 0; i < per && (_scroll_line + i) < _total_lines; i++) {
-    d.translateUTF8ToBlocks(blocks, lines[_scroll_line + i], sizeof(blocks));
     d.setCursor(2, MD_BODY_TOP + i * UIELEM_ROW_H);
-    d.print(blocks);
+    d.print(lines[_scroll_line + i]);   // already glyph-translated
   }
   if (_scroll_line + per < _total_lines) {        // more body below: triangle pages down
     d.drawTextRightAlign(d.width() - gutter - 1, MD_BOTTOM - UIELEM_ROW_H, "v");

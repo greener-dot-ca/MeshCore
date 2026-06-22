@@ -14,6 +14,7 @@ enum {
   PAGE_GPS,
   PAGE_BLUETOOTH,
   PAGE_BUZZ,
+  PAGE_TIME,
   PAGE_SHUTDOWN,
   PAGE_COUNT
 };
@@ -68,12 +69,23 @@ public:
 // Buzzer settings. For now just the on/off toggle; planned: customizable buzz
 // patterns (e.g. morse-beep the hop count on RX).
 class BuzzScreen : public ElementScreen {
-  UIElement _items[1];
+  UIElement _items[2];
 protected:
   int pageIndex() const override { return PAGE_BUZZ; }
   int pageCount() const override { return PAGE_COUNT; }
 public:
   BuzzScreen(UITask* task, NodePrefs* prefs);
+};
+
+// Displayed-time settings: 12/24h format and UTC offset (controls the status-bar
+// clock and the message read-view timestamp).
+class TimeScreen : public ElementScreen {
+  UIElement _items[3];
+protected:
+  int pageIndex() const override { return PAGE_TIME; }
+  int pageCount() const override { return PAGE_COUNT; }
+public:
+  TimeScreen(UITask* task, NodePrefs* prefs);
 };
 
 #ifndef MSG_PAGE_MAX

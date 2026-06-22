@@ -6,6 +6,12 @@
 
 class UITask;
 
+// Time formatting that honors NodePrefs time_format (0=24h,1=12h) + utc_offset_min.
+// epoch==0 (clock not yet set) renders as "--:--" / "--". Shared by the status-bar
+// clock and the message read-view header.
+void uiFormatClock(NodePrefs* p, uint32_t epoch, char* out, size_t n);     // "14:32" / "2:32p"
+void uiFormatDateTime(NodePrefs* p, uint32_t epoch, char* out, size_t n);  // "Jun 22 14:32"
+
 // A scrollable, element-based page. Subclasses own a fixed UIElement[] and
 // point _elems/_count at it (in their ctor, or in rebuild() for dynamic lists).
 // Shared chrome: top status bar, bottom page-dots, right scrollbar + more-arrows.
@@ -25,7 +31,7 @@ protected:
   bool        _show_focus;  // draw the selection bar (false = screen is sleeping)
 
   static const int STATUS_H      = 13;   // top status-bar height
-  static const int DOTS_H        = 3;    // bottom page-dot strip
+  static const int DOTS_H        = 6;    // bottom page-dot strip (fits the 5px current dot)
   static const int USABLE_BOTTOM = 126;  // e-ink usable logical height (~2px panel margin)
   static const int SPACING       = 0;    // gap between elements
 
@@ -36,7 +42,7 @@ protected:
   int contentHeight() const { return elemTop(_count); }
   void ensureFocusVisible();             // element-aligned scroll so _focus is fully visible
 
-  int  drawBattery(DisplayDriver& d);    // returns left x consumed (for title ellipsis)
+  int  drawBattery(DisplayDriver& d, int right);   // battery ends at x==right; returns its left x
   void drawStatusBar(DisplayDriver& d);
   void drawPageDots(DisplayDriver& d);
   void drawScrollbar(DisplayDriver& d);

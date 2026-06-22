@@ -51,6 +51,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   pages[PAGE_GPS]       = new GPSScreen(this, node_prefs);
   pages[PAGE_BLUETOOTH] = new BluetoothScreen(this, node_prefs);
   pages[PAGE_BUZZ]      = new BuzzScreen(this, node_prefs);
+  pages[PAGE_TIME]      = new TimeScreen(this, node_prefs);
   pages[PAGE_MESSAGES]  = _messages;
   pages[PAGE_SHUTDOWN]  = new ShutdownScreen(this, node_prefs);
 
@@ -126,22 +127,9 @@ void UITask::doAdvert() {
 
 void UITask::notify(UIEventType t) {
 #if defined(PIN_BUZZER)
-  switch (t) {
-    case UIEventType::contactMessage:
-      buzzer.play("MsgRcv3:d=4,o=6,b=200:32e,32g,32b,16c7");
-      break;
-    case UIEventType::channelMessage:
-      buzzer.play("kerplop:d=16,o=6,b=120:32g#,32c#");
-      break;
-    case UIEventType::ack:
-      buzzer.play("ack:d=32,o=8,b=120:c");
-      break;
-    case UIEventType::roomMessage:
-    case UIEventType::newContactMessage:
-    case UIEventType::none:
-    default:
-      break;
-  }
+  // Incoming-message sounds are played from newMsg() instead, which knows the
+  // hop count (needed for the morse mode). Here we only do the short ack click.
+  if (t == UIEventType::ack) buzzer.play("ack:d=32,o=8,b=120:c");
 #endif
 
 #ifdef PIN_VIBRATION
@@ -149,6 +137,86 @@ void UITask::notify(UIEventType t) {
     vibration.trigger();
   }
 #endif
+}
+
+#if defined(PIN_BUZZER)
+// Morse the hop count at 440Hz; a direct message (path_len 0xFF) has no hop
+// number so it gets one distinct tone instead. dit/dah ~50/150ms keeps a single
+// digit (hops are 0-7 in practice) under ~1s.
+void UITask::playMorseHops(uint8_t path_len) {
+  const uint16_t F = 440;
+  const uint16_t DIT = 50, DAH = 150, GAP = 50, DGAP = 150;
+  ToneSeg seq[48];
+  uint8_t n = 0;
+
+  if (path_len == 0xFF) {                 // direct: no hops to count
+    seq[n++] = { F, 250 };
+    buzzer.playTones(seq, n);
+    return;
+  }
+
+  static const char* const DIGIT[10] = {
+    "-----", ".----", "..---", "...--", "....-",
+    ".....", "-....", "--...", "---..", "----."
+  };
+  char num[5];
+  int hops = path_len & 63;                    // low 6 bits = hop count (top 2 = hash size)
+  snprintf(num, sizeof(num), "%d", hops);
+
+  for (int d = 0; num[d] && n < 46; d++) {
+    if (d) seq[n++] = { 0, DGAP };            // gap between digits
+    const char* p = DIGIT[num[d] - '0'];
+    for (int i = 0; p[i] && n < 46; i++) {
+      if (i) seq[n++] = { 0, GAP };           // intra-character gap
+      seq[n++] = { F, (uint16_t)(p[i] == '-' ? DAH : DIT) };
+    }
+  }
+  buzzer.playTones(seq, n);
+}
+#endif
+
+void UITask::playMsgSound(uint8_t path_len) {
+#if defined(PIN_BUZZER)
+  switch (_node_prefs ? _node_prefs->buzzer_mode : 0) {
+    case 1:   // simple beep
+      buzzer.play("beep:d=8,o=5,b=200:a");
+      break;
+    case 2:   // morse the hop count
+      playMorseHops(path_len);
+      break;
+    case 0:   // CTU phone ringtone (approximation -- tweak by ear)
+    default:
+      buzzer.play("CTU:d=16,o=6,b=160:a5,c,a5,c,a5,c,p,a5,c,a5,c,a5,c");
+      break;
+  }
+#endif
+}
+
+void UITask::setBuzzerMode(uint8_t m) {
+  if (!_node_prefs) return;
+  _node_prefs->buzzer_mode = m % 3;
+  the_mesh.savePrefs();
+  playMsgSound(3);   // preview: morse mode demos hop count "3"
+}
+
+void UITask::setTimeFormat(uint8_t f) {
+  if (!_node_prefs) return;
+  _node_prefs->time_format = f & 1;
+  the_mesh.savePrefs();
+}
+
+void UITask::setUtcOffsetMin(int16_t m) {
+  if (!_node_prefs) return;
+  _node_prefs->utc_offset_min = m;
+  the_mesh.savePrefs();
+}
+
+void UITask::formatClock(char* out, size_t n) const {
+  uiFormatClock(_node_prefs, currentEpoch(), out, n);
+}
+
+void UITask::formatDateTime(uint32_t epoch, char* out, size_t n) const {
+  uiFormatDateTime(_node_prefs, epoch, out, n);
 }
 
 void UITask::msgRead(int msgcount) {
@@ -159,22 +227,23 @@ void UITask::msgRead(int msgcount) {
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
   _msgcount = msgcount;
+  playMsgSound(path_len);   // configured notification sound (morse mode uses the hops)
 
-  // the message is already in the offline queue (single source of truth);
-  // just surface the Messages page, which rebuilds from the queue.
-  curr_page = PAGE_MESSAGES;
-  pages[PAGE_MESSAGES]->resetFocus();
-  setCurrScreen(pages[PAGE_MESSAGES]);
-
-  if (_display != NULL) {
-    if (!_display->isOn() && !hasConnection()) {
-      _display->turnOn();
-    }
-    if (_display->isOn()) {
-      _auto_off = millis() + AUTO_OFF_MILLIS;
-      _next_refresh = 100;
-    }
+  if (_display != NULL && !_display->isOn() && !hasConnection()) {
+    _display->turnOn();
   }
+
+  // pop the newest message into the read view, then auto-return after ~10s.
+  // remember where we were (only on the first of a burst); a detail/splash
+  // screen falls back to the Messages list.
+  if (_revert_at == 0) {
+    if (onPage() && curr != _detail) { _revert_screen = curr; _revert_page = curr_page; }
+    else                             { _revert_screen = pages[PAGE_MESSAGES]; _revert_page = PAGE_MESSAGES; }
+  }
+  openMessageAt(0);   // 0 = newest (the message that just arrived); sets curr=_detail
+  _revert_at = millis() + 10000;
+
+  if (_display != NULL && _display->isOn()) _auto_off = millis() + AUTO_OFF_MILLIS;
 }
 
 void UITask::userLedHandler() {
@@ -215,6 +284,10 @@ void UITask::shutdown(bool restart) {
   }
 }
 
+uint32_t UITask::currentEpoch() const {
+  return the_mesh.getRTCClock()->getCurrentTime();
+}
+
 bool UITask::isButtonPressed() const {
 #ifdef PIN_USER_BTN
   return user_btn.isPressed();
@@ -226,6 +299,7 @@ bool UITask::isButtonPressed() const {
 void UITask::loop() {
   int ev  = user_btn.check();
   int ev2 = back_btn.check();
+  bool was_on = (_display != NULL && _display->isOn());   // a press that only wakes the screen shouldn't count as interaction
 
   if (curr == _detail) {
     // ---- read view ----
@@ -278,6 +352,15 @@ void UITask::loop() {
   if (ev != BUTTON_EVENT_NONE || ev2 != BUTTON_EVENT_NONE) {
     _auto_off = millis() + AUTO_OFF_MILLIS;   // extend auto-off timer
     _next_refresh = 0;                        // repaint after interaction
+    if (was_on) _revert_at = 0;               // real interaction (not a wake) cancels auto-return
+  }
+
+  // auto-return from a popped-up new message to where the user was
+  if (_revert_at != 0 && millis() > _revert_at) {
+    _revert_at = 0;
+    curr_page = _revert_page;
+    setCurrScreen(_revert_screen ? _revert_screen : (UIScreen*)pages[PAGE_HOME]);
+    _auto_off = millis() + AUTO_OFF_MILLIS;   // keep the screen lit so the return is visible
   }
 
   userLedHandler();

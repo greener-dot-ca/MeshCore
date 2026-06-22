@@ -112,6 +112,7 @@ public:
     bool     is_channel;
     bool     is_direct;            // path_len == 0xFF (direct, no flood path)
     uint8_t  hops;                 // flood path length (low 6 bits) when routed
+    uint8_t  path_len;             // raw path byte: top 2 bits = hash size-1, low 6 = hop count
     uint32_t timestamp;            // sender's epoch timestamp (0 if unknown)
   };
   int  getOfflineQueueLen() const { return offline_queue_len; }
