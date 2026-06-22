@@ -254,6 +254,81 @@ int MyMesh::getFromOfflineQueue(uint8_t frame[]) {
   return 0; // queue is empty
 }
 
+// ---- on-device message viewing -------------------------------------------
+// Queued frames are app-protocol frames whose layout varies by app_target_ver
+// (V3 adds SNR + 2 reserved bytes after the response code) and by contact vs
+// channel. Only PLAIN / SIGNED_PLAIN contact messages and channel messages are
+// human-readable; CLI data, channel data, etc. are skipped.
+
+// Classify a queued frame. Returns false if it is not a readable text message;
+// otherwise sets is_channel, id_pos (offset of pubkey-prefix / channel-idx) and
+// txt_type (for contact frames; channel frames are always plain).
+static bool parseMsgFrame(const uint8_t* buf, bool& is_channel, int& id_pos, uint8_t& txt_type) {
+  bool v3;
+  switch (buf[0]) {
+    case RESP_CODE_CONTACT_MSG_RECV:    v3 = false; is_channel = false; break;
+    case RESP_CODE_CONTACT_MSG_RECV_V3: v3 = true;  is_channel = false; break;
+    case RESP_CODE_CHANNEL_MSG_RECV:    v3 = false; is_channel = true;  break;
+    case RESP_CODE_CHANNEL_MSG_RECV_V3: v3 = true;  is_channel = true;  break;
+    default: return false;
+  }
+  id_pos = v3 ? 4 : 1;   // skip response code (+ SNR + 2 reserved for V3)
+  if (is_channel) { txt_type = TXT_TYPE_PLAIN; return true; }
+  txt_type = buf[id_pos + 6 + 1];   // after 6-byte pubkey prefix + path_len
+  return txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN;
+}
+
+int MyMesh::getDisplayMsgCount() const {
+  int n = 0;
+  bool is_channel; int id_pos; uint8_t txt_type;
+  for (int i = 0; i < offline_queue_len; i++) {
+    if (parseMsgFrame(offline_queue[i].buf, is_channel, id_pos, txt_type)) n++;
+  }
+  return n;
+}
+
+bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
+  bool is_channel; int id_pos; uint8_t txt_type;
+  for (int i = offline_queue_len - 1; i >= 0; i--) {   // newest first
+    const uint8_t* buf = offline_queue[i].buf;
+    if (!parseMsgFrame(buf, is_channel, id_pos, txt_type)) continue;
+    if (display_idx-- > 0) continue;
+
+    int p = id_pos;
+    out.is_channel = is_channel;
+    if (is_channel) {
+      uint8_t channel_idx = buf[p++];
+      uint8_t path_len = buf[p++];
+      p++;        // txt_type (PLAIN)
+      p += 4;     // sender timestamp
+      out.is_direct = (path_len == 0xFF);
+      out.hops = path_len & 63;
+      ChannelDetails ch;
+      if (getChannel(channel_idx, ch)) StrHelper::strncpy(out.sender, ch.name, sizeof(out.sender));
+      else strcpy(out.sender, "Unknown");
+    } else {
+      const uint8_t* prefix = &buf[p]; p += 6;
+      uint8_t path_len = buf[p++];
+      p++;        // txt_type
+      p += 4;     // sender timestamp
+      if (txt_type == TXT_TYPE_SIGNED_PLAIN) p += 4;   // sender_prefix 'extra'
+      out.is_direct = (path_len == 0xFF);
+      out.hops = path_len & 63;
+      ContactInfo* c = lookupContactByPubKey(prefix, 6);
+      if (c) StrHelper::strncpy(out.sender, c->name, sizeof(out.sender));
+      else strcpy(out.sender, "?");
+    }
+
+    int tlen = (int)offline_queue[i].len - p;
+    if (tlen < 0) tlen = 0;
+    if (tlen > (int)sizeof(out.body) - 1) tlen = sizeof(out.body) - 1;
+    memcpy(out.body, &buf[p], tlen);
+    out.body[tlen] = 0;
+    return true;
+  }
+  return false;
+}
+
 float MyMesh::getAirtimeBudgetFactor() const {
   return _prefs.airtime_factor;
 }

@@ -26,6 +26,9 @@ static const char* battPctText(const UIElement& e) {
   sprintf(b, "%d%%", pct);
   return b;
 }
+static const char* battVoltsText(const UIElement& e) {
+  static char b[10]; sprintf(b, "%.2fV", T(e)->getBattMilliVolts() / 1000.0); return b;
+}
 static const char* uptimeText(const UIElement&) {
   static char b[16];
   unsigned long s = millis() / 1000;
@@ -45,26 +48,44 @@ static const char* unreadText(const UIElement& e) {
   static char b[8]; sprintf(b, "%d", T(e)->getMsgCount()); return b;
 }
 
-// ----- GPS getters (read the global location provider) -----
-static const char* gpsFixText(const UIElement&) {
+// ----- GPS getters -----
+// Position/sats/alt always show the LAST good fix (cached in sensors.node_*,
+// only written while a fix is valid), so the page keeps showing the last known
+// location after you go inside or switch GPS off. "Fix" reports live vs not, and
+// "Last" shows how long ago the data was valid.
+static bool gpsLive(const UIElement& e) {                 // powered on AND a current valid fix
   LocationProvider* l = sensors.getLocationProvider();
-  return (l && l->isValid()) ? "Yes" : "No";
+  return T(e)->getGPSState() && l && l->isValid();
+}
+static bool gpsEverFixed() { return sensors.last_fix_ms != 0; }
+
+static const char* gpsFixText(const UIElement& e) {
+  return gpsLive(e) ? "Live" : "No";
+}
+static const char* gpsLastFixText(const UIElement& e) {
+  static char b[16];
+  if (!gpsEverFixed()) { strcpy(b, "--");  return b; }
+  if (gpsLive(e))      { strcpy(b, "now"); return b; }
+  unsigned long s = (millis() - sensors.last_fix_ms) / 1000;   // unsigned, wrap-safe
+  if (s < 60)        sprintf(b, "%lus ago", s);
+  else if (s < 3600) sprintf(b, "%lum ago", s / 60);
+  else               sprintf(b, "%luh ago", s / 3600);
+  return b;
 }
 static const char* gpsSatsText(const UIElement&) {
-  static char b[12]; LocationProvider* l = sensors.getLocationProvider();
-  if (l) sprintf(b, "%ld", l->satellitesCount()); else strcpy(b, "--");
+  static char b[12];
+  if (gpsEverFixed()) sprintf(b, "%ld", sensors.last_sats); else strcpy(b, "--");
   return b;
 }
 static const char* gpsLatLonText(const UIElement&) {
-  static char b[28]; LocationProvider* l = sensors.getLocationProvider();
-  if (l && l->isValid())
-    sprintf(b, "%.4f,%.4f", l->getLatitude() / 1000000.0, l->getLongitude() / 1000000.0);
+  static char b[28];
+  if (gpsEverFixed()) sprintf(b, "%.4f,%.4f", sensors.node_lat, sensors.node_lon);
   else strcpy(b, "--");
   return b;
 }
 static const char* gpsAltText(const UIElement&) {
-  static char b[16]; LocationProvider* l = sensors.getLocationProvider();
-  if (l && l->isValid()) sprintf(b, "%.1fm", l->getAltitude() / 1000.0); else strcpy(b, "--");
+  static char b[16];
+  if (gpsEverFixed()) sprintf(b, "%.1fm", sensors.node_altitude); else strcpy(b, "--");
   return b;
 }
 
@@ -94,6 +115,9 @@ static const char* rssiText(const UIElement&) {
 static const char* snrText(const UIElement&) {
   static char b[12]; sprintf(b, "%d", (int)radio_driver.getLastSNR()); return b;
 }
+static const char* queueText(const UIElement&) {   // unread-by-app depth / capacity
+  static char b[12]; sprintf(b, "%d/%d", the_mesh.getOfflineQueueLen(), OFFLINE_QUEUE_SIZE); return b;
+}
 
 // ----- Bluetooth getters -----
 static const char* blePinText(const UIElement&) {
@@ -117,12 +141,13 @@ static void advertCb(const UIElement& e)    { T(e)->doAdvert(); }
 static void hibernateCb(const UIElement& e) { ((ShutdownScreen*)e.ctx)->initShutdown(); }
 
 // ----- message element callbacks -----
-static const char* msgBody(const UIElement& e) {
-  return ((MessagesScreen::MsgRef*)e.ctx)->e->msg;
-}
-static void msgActivate(const UIElement& e) {
+static const char* rowBody(const UIElement& e) {
   MessagesScreen::MsgRef* r = (MessagesScreen::MsgRef*)e.ctx;
-  r->scr->removeEntry(r->e);
+  return r->scr->previewAt(r->idx);
+}
+static void rowActivate(const UIElement& e) {   // open the full-message read view
+  MessagesScreen::MsgRef* r = (MessagesScreen::MsgRef*)e.ctx;
+  r->scr->openDetail(r->idx);
 }
 
 // ============================================================ SplashScreen
@@ -163,34 +188,35 @@ HomeScreen::HomeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, pre
   _items[1] = makeToggle("Buzzer",    task, buzzerGet, buzzerToggle);
   _items[2] = makeToggle("Bluetooth", task, bleGet,    bleToggle);
   _items[3] = makeToggle("GPS",       task, gpsGet,    gpsToggle);
-  _items[4] = makeAction("Send Advert", task, advertCb);
-  _items[5] = makeLabel("App",    appConnText, task);
-  _items[6] = makeLabel("Unread", unreadText,  task);
-  _items[7] = makeLabel("Uptime", uptimeText,  task);
-  _elems = _items; _count = 8;
+  _items[4] = makeLabel("App",    appConnText, task);
+  _items[5] = makeLabel("Unread", unreadText,  task);
+  _items[6] = makeLabel("Uptime", uptimeText,  task);
+  _elems = _items; _count = 7;
 }
 
 // ============================================================ MeshScreen
 MeshScreen::MeshScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Mesh") {
-  _items[0] = makeLabel("Contacts", contactsText, task);
-  _items[1] = makeLabel("Sent F/D", sentText,     task);
-  _items[2] = makeLabel("Recv F/D", recvText,     task);
-  _items[3] = makeLabel("Airtime",  airtimeText,  task);
-  _items[4] = makeLabel("Noise",    noiseText,    task);
-  _items[5] = makeLabel("RSSI",     rssiText,     task);
-  _items[6] = makeLabel("SNR",      snrText,      task);
-  _items[7] = makeAction("Send Advert", task, advertCb);
-  _elems = _items; _count = 8;
+  _items[0] = makeAction("Send Advert", task, advertCb);
+  _items[1] = makeLabel("Contacts", contactsText, task);
+  _items[2] = makeLabel("Sent F/D", sentText,     task);
+  _items[3] = makeLabel("Recv F/D", recvText,     task);
+  _items[4] = makeLabel("Airtime",  airtimeText,  task);
+  _items[5] = makeLabel("Noise",    noiseText,    task);
+  _items[6] = makeLabel("RSSI",     rssiText,     task);
+  _items[7] = makeLabel("SNR",      snrText,      task);
+  _items[8] = makeLabel("Queue",    queueText,    task);
+  _elems = _items; _count = 9;
 }
 
 // ============================================================ GPSScreen
 GPSScreen::GPSScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "GPS") {
-  _items[0] = makeToggle("GPS", task, gpsGet, gpsToggle);
-  _items[1] = makeLabel("Fix",  gpsFixText,    task);
-  _items[2] = makeLabel("Sats", gpsSatsText,   task);
-  _items[3] = makeLabel("Pos",  gpsLatLonText, task);
-  _items[4] = makeLabel("Alt",  gpsAltText,    task);
-  _elems = _items; _count = 5;
+  _items[0] = makeToggle("GPS",  task, gpsGet, gpsToggle);
+  _items[1] = makeLabel("Fix",   gpsFixText,     task);
+  _items[2] = makeLabel("Last",  gpsLastFixText, task);
+  _items[3] = makeLabel("Sats",  gpsSatsText,    task);
+  _items[4] = makeLabel("Pos",   gpsLatLonText,  task);
+  _items[5] = makeLabel("Alt",   gpsAltText,     task);
+  _elems = _items; _count = 6;
 }
 
 // ============================================================ BluetoothScreen
@@ -203,43 +229,133 @@ BluetoothScreen::BluetoothScreen(UITask* task, NodePrefs* prefs) : ElementScreen
 
 // ============================================================ MessagesScreen
 MessagesScreen::MessagesScreen(UITask* task, NodePrefs* prefs)
-    : ElementScreen(task, prefs, "Messages"), _num(0) {
+    : ElementScreen(task, prefs, "Messages") {
   _elems = _items; _count = 0;
 }
 
-void MessagesScreen::addPreview(uint8_t path_len, const char* from_name, const char* msg) {
-  if (_num >= MAX_UNREAD_MSGS) {                 // drop oldest
-    for (int i = 1; i < _num; i++) _msgs[i - 1] = _msgs[i];
-    _num--;
-  }
-  MsgEntry* p = &_msgs[_num++];
-  p->timestamp = 0;
-  if (path_len == 0xFF) snprintf(p->origin, sizeof(p->origin), "(D) %s:", from_name);
-  else                  snprintf(p->origin, sizeof(p->origin), "(%u) %s:", (unsigned)(path_len & 63), from_name);  // low 6 bits = hop count (Packet::getPathHashCount)
-  strncpy(p->msg, msg, sizeof(p->msg) - 1);
-  p->msg[sizeof(p->msg) - 1] = 0;
-}
-
-void MessagesScreen::removeEntry(MsgEntry* e) {
-  int idx = (int)(e - _msgs);
-  if (idx < 0 || idx >= _num) return;
-  for (int i = idx + 1; i < _num; i++) _msgs[i - 1] = _msgs[i];
-  _num--;
-}
-
+// Rebuilt every render straight from the offline queue (the single source of
+// truth). _rows is a transient render cache, not a parallel message store.
 void MessagesScreen::rebuild() {
-  if (_num <= 0) {
+  int total = the_mesh.getDisplayMsgCount();
+  int n = total > MSG_PAGE_MAX ? MSG_PAGE_MAX : total;
+  if (n <= 0) {
     _items[0] = makeLabel("No messages", nullptr, nullptr);
     _elems = _items; _count = 1;
     return;
   }
-  for (int i = 0; i < _num; i++) {
-    int storage = _num - 1 - i;               // newest first
-    _refs[i].scr = this;
-    _refs[i].e = &_msgs[storage];
-    _items[i] = makeTwoRow(_msgs[storage].origin, &_refs[i], msgBody, msgActivate);
+  MyMesh::MsgView v;
+  for (int i = 0; i < n; i++) {            // i==0 is newest
+    if (!the_mesh.getDisplayMsg(i, v)) { _rows[i].origin[0] = _rows[i].preview[0] = 0; }
+    else {
+      if (v.is_direct) snprintf(_rows[i].origin, sizeof(_rows[i].origin), "(D) %s:", v.sender);
+      else             snprintf(_rows[i].origin, sizeof(_rows[i].origin), "(%u) %s:", (unsigned)v.hops, v.sender);
+      strncpy(_rows[i].preview, v.body, sizeof(_rows[i].preview) - 1);
+      _rows[i].preview[sizeof(_rows[i].preview) - 1] = 0;
+    }
+    _refs[i].scr = this; _refs[i].idx = i;
+    _items[i] = makeTwoRow(_rows[i].origin, &_refs[i], rowBody, rowActivate);
   }
-  _elems = _items; _count = _num;
+  int count = n;
+  if (total > n) {     // more buffered for the app than we list on-device
+    snprintf(_more, sizeof(_more), "+%d more on app", total - n);
+    _items[n] = makeLabel(_more, nullptr, nullptr);
+    count = n + 1;
+  }
+  _elems = _items; _count = count;
+}
+
+void MessagesScreen::openDetail(int display_idx) {
+  MyMesh::MsgView v;
+  if (the_mesh.getDisplayMsg(display_idx, v)) _task->openMessage(v);
+}
+
+// ============================================================ MessageDetailScreen
+#define WRAP_MAX_LINES 24
+#define WRAP_LINE_CAP  48
+
+// Greedy word-wrap of `text` to `max_w` pixels into lines[]. Returns line count.
+// Widths are measured on the block-translated candidate (matches how lines draw).
+static int wrapText(DisplayDriver& d, int max_w, const char* text,
+                    char lines[][WRAP_LINE_CAP], int max_lines) {
+  int nl = 0; size_t li = 0;
+  lines[0][0] = 0;
+  char blocks[WRAP_LINE_CAP * 2];
+  const char* p = text;
+  while (*p && nl < max_lines) {
+    if (*p == '\n') {                                   // explicit break
+      lines[nl][li] = 0;
+      if (++nl < max_lines) { lines[nl][0] = 0; li = 0; }
+      p++; continue;
+    }
+    const char* ws = p;                                 // next word
+    while (*p && *p != ' ' && *p != '\n') p++;
+    size_t wlen = p - ws;
+    if (wlen >= WRAP_LINE_CAP) wlen = WRAP_LINE_CAP - 1; // clamp a monster word
+
+    bool wrap = false;
+    if (li + wlen >= WRAP_LINE_CAP) {
+      wrap = (li > 0);
+    } else if (li > 0) {
+      char cand[WRAP_LINE_CAP];
+      memcpy(cand, lines[nl], li); memcpy(cand + li, ws, wlen); cand[li + wlen] = 0;
+      d.translateUTF8ToBlocks(blocks, cand, sizeof(blocks));
+      if ((int)d.getTextWidth(blocks) > max_w) wrap = true;
+    }
+    if (wrap) {
+      lines[nl][li] = 0;
+      if (++nl >= max_lines) break;
+      li = 0; lines[nl][0] = 0;
+    }
+    memcpy(lines[nl] + li, ws, wlen); li += wlen; lines[nl][li] = 0;
+    while (*p == ' ') {                                  // keep spaces, not at line start
+      if (li > 0 && li < WRAP_LINE_CAP - 1) { lines[nl][li++] = ' '; lines[nl][li] = 0; }
+      p++;
+    }
+  }
+  if (li > 0 && nl < max_lines) { lines[nl][li] = 0; nl++; }
+  return nl;
+}
+
+static const int MD_BODY_TOP = 14;
+static const int MD_BOTTOM   = 124;
+static int mdLinesPerPage() { return (MD_BOTTOM - MD_BODY_TOP) / UIELEM_ROW_H; }
+
+void MessageDetailScreen::scrollDown() {
+  int per = mdLinesPerPage();
+  if (_scroll_line + per < _total_lines) _scroll_line += per;
+  else _scroll_line = 0;   // wrap back to the top
+}
+
+int MessageDetailScreen::render(DisplayDriver& d) {
+  d.setTextSize(1);
+
+  // header: sender + (D)/hop count, mirroring the status-bar style
+  char origin[40], hdr[48];
+  if (_msg.is_direct) snprintf(origin, sizeof(origin), "(D) %s", _msg.sender);
+  else                snprintf(origin, sizeof(origin), "(%u) %s", (unsigned)_msg.hops, _msg.sender);
+  d.setColor(DisplayDriver::GREEN);
+  d.translateUTF8ToBlocks(hdr, origin, sizeof(hdr));
+  d.drawTextEllipsized(0, 0, d.width(), hdr);
+  d.setColor(DisplayDriver::LIGHT);
+  d.fillRect(0, 11, d.width(), 1);
+
+  // body, word-wrapped
+  char lines[WRAP_MAX_LINES][WRAP_LINE_CAP];
+  char blocks[WRAP_LINE_CAP * 2];
+  _total_lines = wrapText(d, d.width() - 4, _msg.body, lines, WRAP_MAX_LINES);
+  if (_scroll_line >= _total_lines) _scroll_line = 0;
+
+  const int per = mdLinesPerPage();
+  d.setColor(DisplayDriver::LIGHT);
+  for (int i = 0; i < per && (_scroll_line + i) < _total_lines; i++) {
+    d.translateUTF8ToBlocks(blocks, lines[_scroll_line + i], sizeof(blocks));
+    d.setCursor(2, MD_BODY_TOP + i * UIELEM_ROW_H);
+    d.print(blocks);
+  }
+  if (_scroll_line + per < _total_lines) {        // more below: hint at triangle=page-down
+    d.drawTextRightAlign(d.width() - 2, MD_BOTTOM - UIELEM_ROW_H, "v");
+  }
+  return 10000;   // e-ink: repaint only on interaction
 }
 
 // ============================================================ ShutdownScreen
@@ -253,10 +369,11 @@ void ShutdownScreen::rebuild() {
     _items[0] = makeLabel("Hibernating...", nullptr, nullptr);
     _elems = _items; _count = 1;
   } else {
-    _items[0] = makeLabel("Battery",  battPctText,  _task);
-    _items[1] = makeLabel("Charging", chargingText, _task);
-    _items[2] = makeAction("Hibernate", this, hibernateCb);
-    _elems = _items; _count = 3;
+    _items[0] = makeLabel("Battery",  battPctText,   _task);
+    _items[1] = makeLabel("Voltage",  battVoltsText, _task);
+    _items[2] = makeLabel("Charging", chargingText,  _task);
+    _items[3] = makeAction("Hibernate", this, hibernateCb);
+    _elems = _items; _count = 4;
   }
 }
 

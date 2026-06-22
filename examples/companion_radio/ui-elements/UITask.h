@@ -23,7 +23,7 @@
 #include "../NodePrefs.h"
 #include "Pages.h"
 
-// Element-based, two-button companion UI (see IDEAS.md). Drop-in replacement
+// Element-based, two-button companion UI (see README.md). Drop-in replacement
 // for ui-new's UITask: same constructor / begin() / AbstractUITask virtuals.
 class UITask : public AbstractUITask {
   DisplayDriver* _display;
@@ -46,11 +46,12 @@ class UITask : public AbstractUITask {
   int last_led_increment = 0;
 #endif
 
-  UIScreen*       splash;
-  ElementScreen*  pages[PAGE_COUNT];
-  int             curr_page;
-  UIScreen*       curr;
-  MessagesScreen* _messages;
+  UIScreen*            splash;
+  ElementScreen*       pages[PAGE_COUNT];
+  int                  curr_page;
+  UIScreen*            curr;
+  MessagesScreen*      _messages;
+  MessageDetailScreen* _detail;
 
   void userLedHandler();
   void setCurrScreen(UIScreen* c);
@@ -68,10 +69,12 @@ public:
     curr_page = 0;
     _msgcount = 0;
     _messages = NULL;
+    _detail = NULL;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
   void gotoHomeScreen();
+  void openMessage(const MyMesh::MsgView& m);   // show the full-message read view
   void showAlert(const char* text, int duration_millis);
   int  getMsgCount() const { return _msgcount; }
   bool hasDisplay() const { return _display != NULL; }

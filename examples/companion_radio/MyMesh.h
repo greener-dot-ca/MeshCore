@@ -102,6 +102,21 @@ public:
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
 
+  // ---- on-device viewing of queued (unread-by-app) messages ----
+  // The offline queue is the single source of truth for "unread": messages
+  // received over the mesh that the companion app has not yet pulled. These
+  // accessors decode the queued protocol frames into a display-friendly view.
+  struct MsgView {
+    char    sender[32];            // contact or channel name ("?" if unknown)
+    char    body[MAX_FRAME_SIZE];  // message text the device has (NUL-terminated)
+    bool    is_channel;
+    bool    is_direct;             // path_len == 0xFF (direct, no flood path)
+    uint8_t hops;                  // flood path length (low 6 bits) when routed
+  };
+  int  getOfflineQueueLen() const { return offline_queue_len; }
+  int  getDisplayMsgCount() const;                    // # of readable text msgs queued
+  bool getDisplayMsg(int display_idx, MsgView& out);  // display_idx 0 = newest
+
 protected:
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;

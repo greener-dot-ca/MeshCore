@@ -45,6 +45,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
   splash = new SplashScreen(this);
   _messages = new MessagesScreen(this, node_prefs);
+  _detail = new MessageDetailScreen(this);
   pages[PAGE_HOME]      = new HomeScreen(this, node_prefs);
   pages[PAGE_MESH]      = new MeshScreen(this, node_prefs);
   pages[PAGE_GPS]       = new GPSScreen(this, node_prefs);
@@ -65,6 +66,11 @@ void UITask::gotoHomeScreen() {
   curr_page = PAGE_HOME;
   pages[PAGE_HOME]->resetFocus();
   setCurrScreen(pages[PAGE_HOME]);
+}
+
+void UITask::openMessage(const MyMesh::MsgView& m) {
+  _detail->setMessage(m);
+  setCurrScreen(_detail);
 }
 
 void UITask::nextPage() {
@@ -132,12 +138,15 @@ void UITask::notify(UIEventType t) {
 
 void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
+  // the app drained the queue; if the list is showing, repaint to mirror it
+  if (curr == _messages) _next_refresh = 0;
 }
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
   _msgcount = msgcount;
 
-  _messages->addPreview(path_len, from_name, text);
+  // the message is already in the offline queue (single source of truth);
+  // just surface the Messages page, which rebuilds from the queue.
   curr_page = PAGE_MESSAGES;
   pages[PAGE_MESSAGES]->resetFocus();
   setCurrScreen(pages[PAGE_MESSAGES]);
@@ -200,34 +209,52 @@ bool UITask::isButtonPressed() const {
 }
 
 void UITask::loop() {
-  // ---- button 1 (user_btn / GPIO42): ELEMENT navigation ----
-  //   click        = next element (down)
-  //   long press   = previous element (up)   (or CLI rescue in first 8s)
-  //   double-click = activate / select focused element
-  int ev = user_btn.check();
-  if (ev == BUTTON_EVENT_CLICK) {
-    if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->focusNext();
-  } else if (ev == BUTTON_EVENT_LONG_PRESS) {
-    if (millis() - ui_started_at < 8000) {   // rescue window after boot
-      the_mesh.enterCLIRescue();
-    } else if (!wakeIfOff() && onPage()) {
-      ((ElementScreen*)curr)->focusPrev();
-    }
-  } else if (ev == BUTTON_EVENT_DOUBLE_CLICK) {
-    if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->activateFocused();
-  }
-
-  // ---- button 2 (back_btn / GPIO39): PAGE navigation ----
-  //   click        = next page
-  //   long press   = previous page
-  //   double-click = go to home page
+  int ev  = user_btn.check();
   int ev2 = back_btn.check();
-  if (ev2 == BUTTON_EVENT_CLICK) {
-    if (!wakeIfOff() && onPage()) nextPage();
-  } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
-    if (!wakeIfOff() && onPage()) prevPage();
-  } else if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
-    if (!wakeIfOff() && onPage()) gotoHomeScreen();
+
+  if (curr == _detail) {
+    // ---- read view ----
+    //   triangle  any press   = page down (wraps to top)
+    //   circle    hold        = back to Messages list (a click won't exit)
+    //   circle    double      = Home
+    if (ev == BUTTON_EVENT_LONG_PRESS && millis() - ui_started_at < 8000) {
+      the_mesh.enterCLIRescue();
+    } else if (ev != BUTTON_EVENT_NONE) {
+      if (!wakeIfOff()) _detail->scrollDown();
+    }
+    if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
+      if (!wakeIfOff()) gotoHomeScreen();
+    } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
+      if (!wakeIfOff()) { curr_page = PAGE_MESSAGES; _messages->resetFocus(); setCurrScreen(_messages); }
+    }
+  } else {
+    // ---- triangle button (user_btn / GPIO42): ELEMENT navigation ----
+    //   click        = next element (down)
+    //   long press   = previous element (up)   (or CLI rescue in first 8s)
+    //   double-click = activate / select focused element
+    if (ev == BUTTON_EVENT_CLICK) {
+      if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->focusNext();
+    } else if (ev == BUTTON_EVENT_LONG_PRESS) {
+      if (millis() - ui_started_at < 8000) {   // rescue window after boot
+        the_mesh.enterCLIRescue();
+      } else if (!wakeIfOff() && onPage()) {
+        ((ElementScreen*)curr)->focusPrev();
+      }
+    } else if (ev == BUTTON_EVENT_DOUBLE_CLICK) {
+      if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->activateFocused();
+    }
+
+    // ---- circle button (back_btn / GPIO39): PAGE navigation ----
+    //   click        = next page
+    //   long press   = previous page (back)
+    //   double-click = go to home page
+    if (ev2 == BUTTON_EVENT_CLICK) {
+      if (!wakeIfOff() && onPage()) nextPage();
+    } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
+      if (!wakeIfOff() && onPage()) prevPage();
+    } else if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
+      if (!wakeIfOff() && onPage()) gotoHomeScreen();
+    }
   }
 
   if (ev != BUTTON_EVENT_NONE || ev2 != BUTTON_EVENT_NONE) {
@@ -271,7 +298,7 @@ void UITask::loop() {
     if (millis() > _auto_off) {
       // e-ink keeps its image after turnOff(), so repaint once with the
       // selection bar hidden as a visual hint that the screen is asleep.
-      if (onPage()) {
+      if (onPage() && curr != _detail) {
         ElementScreen* s = (ElementScreen*)curr;
         s->setFocusVisible(false);
         _display->startFrame();
