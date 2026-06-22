@@ -20,8 +20,9 @@ protected:
   const char* _title;
   UIElement*  _elems;
   int         _count;
-  int         _focus;     // index of focused selectable element, or -1
-  int         _scroll_y;  // pixel scroll offset into the content column
+  int         _focus;       // index of focused selectable element, or -1
+  int         _scroll_y;    // pixel scroll offset into the content column
+  bool        _show_focus;  // draw the selection bar (false = screen is sleeping)
 
   static const int STATUS_H      = 13;   // top status-bar height
   static const int DOTS_H        = 3;    // bottom page-dot strip
@@ -47,7 +48,7 @@ protected:
 public:
   ElementScreen(UITask* task, NodePrefs* prefs, const char* title)
     : _task(task), _prefs(prefs), _title(title), _elems(nullptr),
-      _count(0), _focus(-1), _scroll_y(0) {}
+      _count(0), _focus(-1), _scroll_y(0), _show_focus(true) {}
 
   int  render(DisplayDriver& display) override;
   bool handleInput(char c) override;
@@ -56,4 +57,5 @@ public:
   void focusNext();         // advance focus to next selectable (wraps)
   void focusPrev();         // move focus to previous selectable (wraps)
   void activateFocused();   // activate the focused element
+  void setFocusVisible(bool v) { _show_focus = v; }   // hide selection bar while sleeping
 };

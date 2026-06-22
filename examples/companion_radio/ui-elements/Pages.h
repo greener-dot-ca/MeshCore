@@ -46,7 +46,7 @@ public:
 };
 
 class GPSScreen : public ElementScreen {
-  UIElement _items[6];
+  UIElement _items[5];
 protected:
   int pageIndex() const override { return PAGE_GPS; }
   int pageCount() const override { return PAGE_COUNT; }

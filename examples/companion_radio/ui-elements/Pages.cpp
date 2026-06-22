@@ -55,14 +55,11 @@ static const char* gpsSatsText(const UIElement&) {
   if (l) sprintf(b, "%ld", l->satellitesCount()); else strcpy(b, "--");
   return b;
 }
-static const char* gpsLatText(const UIElement&) {
-  static char b[16]; LocationProvider* l = sensors.getLocationProvider();
-  if (l && l->isValid()) sprintf(b, "%.4f", l->getLatitude() / 1000000.0); else strcpy(b, "--");
-  return b;
-}
-static const char* gpsLonText(const UIElement&) {
-  static char b[16]; LocationProvider* l = sensors.getLocationProvider();
-  if (l && l->isValid()) sprintf(b, "%.4f", l->getLongitude() / 1000000.0); else strcpy(b, "--");
+static const char* gpsLatLonText(const UIElement&) {
+  static char b[28]; LocationProvider* l = sensors.getLocationProvider();
+  if (l && l->isValid())
+    sprintf(b, "%.4f,%.4f", l->getLatitude() / 1000000.0, l->getLongitude() / 1000000.0);
+  else strcpy(b, "--");
   return b;
 }
 static const char* gpsAltText(const UIElement&) {
@@ -189,12 +186,11 @@ MeshScreen::MeshScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, pre
 // ============================================================ GPSScreen
 GPSScreen::GPSScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "GPS") {
   _items[0] = makeToggle("GPS", task, gpsGet, gpsToggle);
-  _items[1] = makeLabel("Fix",  gpsFixText,  task);
-  _items[2] = makeLabel("Sats", gpsSatsText, task);
-  _items[3] = makeLabel("Lat",  gpsLatText,  task);
-  _items[4] = makeLabel("Lon",  gpsLonText,  task);
-  _items[5] = makeLabel("Alt",  gpsAltText,  task);
-  _elems = _items; _count = 6;
+  _items[1] = makeLabel("Fix",  gpsFixText,    task);
+  _items[2] = makeLabel("Sats", gpsSatsText,   task);
+  _items[3] = makeLabel("Pos",  gpsLatLonText, task);
+  _items[4] = makeLabel("Alt",  gpsAltText,    task);
+  _elems = _items; _count = 5;
 }
 
 // ============================================================ BluetoothScreen
@@ -219,7 +215,7 @@ void MessagesScreen::addPreview(uint8_t path_len, const char* from_name, const c
   MsgEntry* p = &_msgs[_num++];
   p->timestamp = 0;
   if (path_len == 0xFF) snprintf(p->origin, sizeof(p->origin), "(D) %s:", from_name);
-  else                  snprintf(p->origin, sizeof(p->origin), "(%u) %s:", (unsigned)path_len, from_name);
+  else                  snprintf(p->origin, sizeof(p->origin), "(%u) %s:", (unsigned)(path_len & 63), from_name);  // low 6 bits = hop count (Packet::getPathHashCount)
   strncpy(p->msg, msg, sizeof(p->msg) - 1);
   p->msg[sizeof(p->msg) - 1] = 0;
 }

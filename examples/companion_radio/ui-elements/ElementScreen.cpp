@@ -160,7 +160,7 @@ int ElementScreen::render(DisplayDriver& d) {
     if (et < _scroll_y) continue;            // above viewport
     if (et + eh > _scroll_y + vp) break;      // below viewport (rest won't fit)
     int ey = top + (et - _scroll_y);
-    _elems[i].draw(d, 0, ey, cw, i == _focus);
+    _elems[i].draw(d, 0, ey, cw, _show_focus && i == _focus);
   }
 
   if (hasSB) drawScrollbar(d);

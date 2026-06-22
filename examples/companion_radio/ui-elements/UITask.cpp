@@ -204,7 +204,6 @@ void UITask::loop() {
   //   click        = next element (down)
   //   long press   = previous element (up)   (or CLI rescue in first 8s)
   //   double-click = activate / select focused element
-  //   triple-click = toggle buzzer mute
   int ev = user_btn.check();
   if (ev == BUTTON_EVENT_CLICK) {
     if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->focusNext();
@@ -216,8 +215,6 @@ void UITask::loop() {
     }
   } else if (ev == BUTTON_EVENT_DOUBLE_CLICK) {
     if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->activateFocused();
-  } else if (ev == BUTTON_EVENT_TRIPLE_CLICK) {
-    toggleBuzzer();
   }
 
   // ---- button 2 (back_btn / GPIO39): PAGE navigation ----
@@ -272,6 +269,16 @@ void UITask::loop() {
     }
 #endif
     if (millis() > _auto_off) {
+      // e-ink keeps its image after turnOff(), so repaint once with the
+      // selection bar hidden as a visual hint that the screen is asleep.
+      if (onPage()) {
+        ElementScreen* s = (ElementScreen*)curr;
+        s->setFocusVisible(false);
+        _display->startFrame();
+        s->render(*_display);
+        _display->endFrame();
+        s->setFocusVisible(true);   // restore so the bar returns on wake
+      }
       _display->turnOff();
     }
 #endif
