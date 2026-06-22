@@ -21,6 +21,9 @@ class ThinkNodeM1SensorManager : public SensorManager {
   void start_gps();
   void stop_gps();
 public:
+  unsigned long last_fix_ms = 0;   // millis() of the most recent valid fix (0 = never fixed)
+  long          last_sats   = 0;   // satellite count at that fix
+
   ThinkNodeM1SensorManager(LocationProvider &location): _location(&location) { }
   LocationProvider* getLocationProvider() override { return _location; }
   bool begin() override;
