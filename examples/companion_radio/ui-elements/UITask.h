@@ -52,6 +52,11 @@ class UITask : public AbstractUITask {
   UIScreen*            curr;
   MessagesScreen*      _messages;
   MessageDetailScreen* _detail;
+  HelpScreen*          _help;
+
+  // triple-click pops up the help overlay; any press returns here
+  UIScreen*            _help_return = NULL;
+  int                  _help_return_page = 0;
 
   // a new message pops up in the read view for ~10s, then returns to _revert_*
   UIScreen*            _revert_screen = NULL;
@@ -79,10 +84,12 @@ public:
     _msgcount = 0;
     _messages = NULL;
     _detail = NULL;
+    _help = NULL;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
   void gotoHomeScreen();
+  void showHelp();               // pop up the help overlay (remembers where to return)
   void openMessageAt(int idx);   // show the read view for list message `idx`
   void navMessage(int delta);    // step to another message while in the read view
   void showAlert(const char* text, int duration_millis);

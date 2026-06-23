@@ -46,6 +46,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   splash = new SplashScreen(this);
   _messages = new MessagesScreen(this, node_prefs);
   _detail = new MessageDetailScreen(this);
+  _help = new HelpScreen();
   pages[PAGE_HOME]      = new HomeScreen(this, node_prefs);
   pages[PAGE_MESH]      = new MeshScreen(this, node_prefs);
   pages[PAGE_GPS]       = new GPSScreen(this, node_prefs);
@@ -68,6 +69,12 @@ void UITask::gotoHomeScreen() {
   curr_page = PAGE_HOME;
   pages[PAGE_HOME]->resetFocus();
   setCurrScreen(pages[PAGE_HOME]);
+}
+
+void UITask::showHelp() {
+  _help_return = curr;            // where a dismiss press returns to
+  _help_return_page = curr_page;
+  setCurrScreen(_help);
 }
 
 void UITask::openMessageAt(int idx) {
@@ -308,7 +315,15 @@ void UITask::loop() {
   int ev2 = back_btn.check();
   bool was_on = (_display != NULL && _display->isOn());   // a press that only wakes the screen shouldn't count as interaction
 
-  if (curr == _detail) {
+  if (curr == _help) {
+    // ---- help overlay ---- any button press dismisses it back to where we were
+    if (ev != BUTTON_EVENT_NONE || ev2 != BUTTON_EVENT_NONE) {
+      if (!wakeIfOff()) {
+        curr_page = _help_return_page;
+        setCurrScreen(_help_return ? _help_return : (UIScreen*)pages[PAGE_HOME]);
+      }
+    }
+  } else if (curr == _detail) {
     // ---- read view ----
     //   triangle  click       = page down body, then on to the next (older) message
     //   triangle  hold        = previous (newer) message  (CLI rescue in first 8s)
@@ -323,6 +338,8 @@ void UITask::loop() {
     }
     if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
       if (!wakeIfOff()) gotoHomeScreen();
+    } else if (ev2 == BUTTON_EVENT_TRIPLE_CLICK) {
+      if (!wakeIfOff()) showHelp();
     } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
       if (!wakeIfOff()) { curr_page = PAGE_MESSAGES; _messages->resetFocus(); setCurrScreen(_messages); }
     }
@@ -353,6 +370,8 @@ void UITask::loop() {
       if (!wakeIfOff() && onPage()) prevPage();
     } else if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
       if (!wakeIfOff() && onPage()) gotoHomeScreen();
+    } else if (ev2 == BUTTON_EVENT_TRIPLE_CLICK) {
+      if (!wakeIfOff() && onPage()) showHelp();
     }
   }
 
@@ -400,7 +419,7 @@ void UITask::loop() {
     if (millis() >= _next_refresh && curr) {
       // hide the selection bar while asleep (visual "screen off" hint); it
       // returns on the next render once awake.
-      ElementScreen* page = (onPage() && curr != _detail) ? (ElementScreen*)curr : NULL;
+      ElementScreen* page = (onPage() && curr != _detail && curr != _help) ? (ElementScreen*)curr : NULL;
       if (page) page->setFocusVisible(!asleep);
 
       _display->startFrame();

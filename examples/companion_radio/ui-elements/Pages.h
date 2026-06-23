@@ -138,6 +138,14 @@ public:
   int  render(DisplayDriver& display) override;
 };
 
+// Pop-up help overlay (not a carousel page -- shown like the message read view):
+// explains the status-bar icons and the two-button navigation. Any press dismisses.
+class HelpScreen : public UIScreen {
+public:
+  HelpScreen() {}
+  int render(DisplayDriver& display) override;
+};
+
 class ShutdownScreen : public ElementScreen {
   UIElement _items[4];
   bool _shutdown_init;

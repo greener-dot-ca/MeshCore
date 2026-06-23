@@ -44,8 +44,8 @@ void uiFormatDateTime(NodePrefs* p, uint32_t epoch, char* out, size_t n) {
 // 8x9 status glyphs, sized to the size-1 font cap height so they read as the same
 // height as the title text. Bit 0x80 = leftmost pixel (MSB-first, matching drawXbm).
 // Drawn full-bleed/bold for high contrast on e-ink; tweak a row by editing its bits.
-static const int ES_ICON_H = 9;                 // glyph height (≈ font caps)
-static const uint8_t es_muted_icon[] = {        // speaker + small X (muted)
+const int ES_ICON_H = 9;                        // glyph height (≈ font caps)
+const uint8_t es_muted_icon[] = {               // speaker + small X (muted)
   0b00010000,
   0b00110000,
   0b01110000,
@@ -56,29 +56,29 @@ static const uint8_t es_muted_icon[] = {        // speaker + small X (muted)
   0b00110000,
   0b00010000,
 };
-static const uint8_t es_bt_icon[] = {           // bluetooth rune
-  0b00011000,
-  0b00011000,
-  0b01011010,
-  0b00111100,
-  0b00011000,
-  0b00111100,
-  0b01011010,
-  0b00011000,
-  0b00011000,
+const uint8_t es_app_icon[] = {                 // smartphone (companion app connected)
+  0b01111110,
+  0b01000010,
+  0b01000010,
+  0b01000010,
+  0b01000010,
+  0b01000010,
+  0b01000010,
+  0b01011010,   // home button
+  0b01111110,
 };
-static const uint8_t es_gps_icon[] = {          // location pin
+const uint8_t es_gps_icon[] = {                 // navigation arrow (locator cursor)
+  0b00011000,
+  0b00011000,
+  0b00111100,
   0b00111100,
   0b01111110,
-  0b11100111,
-  0b11100111,
   0b01111110,
-  0b00111100,
-  0b00011000,
-  0b00011000,
-  0b00011000,
+  0b11100111,
+  0b11000011,
+  0b00000000,
 };
-static const uint8_t es_bolt_icon[] = {         // charging lightning bolt
+const uint8_t es_bolt_icon[] = {                // charging lightning bolt
   0b00001110,
   0b00011100,
   0b00111000,
@@ -187,9 +187,9 @@ void ElementScreen::drawStatusBar(DisplayDriver& d) {
   d.drawTextRightAlign(d.width(), 0, clk);
   int batt_left = drawBattery(d, d.width() - cw - 3);
 
-  // status icons (BT / GPS / muted): right-justified just left of the battery
+  // status icons (app connected / GPS / muted): right-justified just left of the battery
   const uint8_t* bm[3]; DisplayDriver::Color col[3]; int ni = 0;
-  if (_task->hasConnection()) { bm[ni] = es_bt_icon;    col[ni] = DisplayDriver::LIGHT; ni++; }
+  if (_task->hasConnection()) { bm[ni] = es_app_icon;   col[ni] = DisplayDriver::LIGHT; ni++; }
   if (_task->getGPSState())   { bm[ni] = es_gps_icon;   col[ni] = DisplayDriver::LIGHT; ni++; }
 #ifdef PIN_BUZZER
   if (_task->isBuzzerQuiet())  { bm[ni] = es_muted_icon; col[ni] = DisplayDriver::RED;  ni++; }

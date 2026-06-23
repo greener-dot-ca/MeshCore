@@ -475,6 +475,50 @@ int MessageDetailScreen::render(DisplayDriver& d) {
   return 10000;   // e-ink: repaint only on interaction
 }
 
+// ============================================================ HelpScreen
+// Button glyphs matching the device's two physical keys (8x8, MSB-first).
+static const uint8_t help_tri[]  = {   // triangle key (top / user button)
+  0b00011000, 0b00011000, 0b00111100, 0b00111100,
+  0b01111110, 0b01111110, 0b11111111, 0b00000000,
+};
+static const uint8_t help_circ[] = {   // circle key (back button)
+  0b00111100, 0b01111110, 0b11100111, 0b11000011,
+  0b11000011, 0b11100111, 0b01111110, 0b00111100,
+};
+
+int HelpScreen::render(DisplayDriver& d) {
+  d.setTextSize(1);
+  d.setColor(DisplayDriver::GREEN);
+  d.setCursor(0, 0);
+  d.print("Help");
+  d.setColor(DisplayDriver::LIGHT);
+  d.fillRect(0, 11, d.width(), 1);
+
+  // ---- status-bar icon legend (draw the real glyphs next to their meaning) ----
+  const uint8_t* icons[] = { es_app_icon, es_gps_icon, es_muted_icon, es_bolt_icon };
+  const char*    labels[] = { "App linked", "GPS on", "Sound muted", "Charging" };
+  int y = 15;
+  for (int i = 0; i < 4; i++) {
+    d.drawXbm(2, y + 1, icons[i], 8, ES_ICON_H);
+    d.setCursor(14, y);
+    d.print(labels[i]);
+    y += 11;
+  }
+
+  // ---- two-button navigation ----
+  y += 3;
+  d.drawXbm(2, y + 1, help_tri, 8, 8);
+  d.setCursor(14, y);       d.print("click next");
+  d.setCursor(14, y + 11);  d.print("hold prev  2x pick");
+  y += 24;
+  d.drawXbm(2, y + 1, help_circ, 8, 8);
+  d.setCursor(14, y);       d.print("click page");
+  d.setCursor(14, y + 11);  d.print("hold back  2x home");
+  d.setCursor(14, y + 22);  d.print("3x  this help");
+
+  return 3600000;   // static: only repaints on interaction (which dismisses it)
+}
+
 // ============================================================ ShutdownScreen
 ShutdownScreen::ShutdownScreen(UITask* task, NodePrefs* prefs)
     : ElementScreen(task, prefs, "Pwr"), _shutdown_init(false) {

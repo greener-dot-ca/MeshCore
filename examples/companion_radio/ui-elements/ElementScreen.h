@@ -12,6 +12,14 @@ class UITask;
 void uiFormatClock(NodePrefs* p, uint32_t epoch, char* out, size_t n);     // "14:32" / "2:32p"
 void uiFormatDateTime(NodePrefs* p, uint32_t epoch, char* out, size_t n);  // "Jun 22 14:32"
 
+// Status-bar glyphs (8 x ES_ICON_H, MSB-first), shared so the Help screen can
+// draw the same icons it explains.
+extern const int ES_ICON_H;
+extern const uint8_t es_app_icon[];    // companion app connected
+extern const uint8_t es_gps_icon[];    // GPS on
+extern const uint8_t es_muted_icon[];  // buzzer muted
+extern const uint8_t es_bolt_icon[];   // charging
+
 // A scrollable, element-based page. Subclasses own a fixed UIElement[] and
 // point _elems/_count at it (in their ctor, or in rebuild() for dynamic lists).
 // Shared chrome: top status bar, bottom page-dots, right scrollbar + more-arrows.
