@@ -41,18 +41,53 @@ void uiFormatDateTime(NodePrefs* p, uint32_t epoch, char* out, size_t n) {
   #define BATT_MAX_MILLIVOLTS 4200
 #endif
 
-// small 8x8 status glyphs (XBM so the e-ink scaler doesn't stripe them)
-static const uint8_t es_muted_icon[] = {        // buzzer muted
-  0x20, 0x6a, 0xea, 0xe4, 0xe4, 0xea, 0x6a, 0x20
+// 8x9 status glyphs, sized to the size-1 font cap height so they read as the same
+// height as the title text. Bit 0x80 = leftmost pixel (MSB-first, matching drawXbm).
+// Drawn full-bleed/bold for high contrast on e-ink; tweak a row by editing its bits.
+static const int ES_ICON_H = 9;                 // glyph height (≈ font caps)
+static const uint8_t es_muted_icon[] = {        // speaker + small X (muted)
+  0b00010000,
+  0b00110000,
+  0b01110000,
+  0b11110101,
+  0b11110010,
+  0b11110101,
+  0b01110000,
+  0b00110000,
+  0b00010000,
 };
 static const uint8_t es_bt_icon[] = {           // bluetooth rune
-  0x10, 0x18, 0x54, 0x38, 0x38, 0x54, 0x18, 0x10
+  0b00011000,
+  0b00011000,
+  0b01011010,
+  0b00111100,
+  0b00011000,
+  0b00111100,
+  0b01011010,
+  0b00011000,
+  0b00011000,
 };
 static const uint8_t es_gps_icon[] = {          // location pin
-  0x38, 0x44, 0x54, 0x44, 0x28, 0x10, 0x10, 0x00
+  0b00111100,
+  0b01111110,
+  0b11100111,
+  0b11100111,
+  0b01111110,
+  0b00111100,
+  0b00011000,
+  0b00011000,
+  0b00011000,
 };
 static const uint8_t es_bolt_icon[] = {         // charging lightning bolt
-  0x0c, 0x18, 0x30, 0x7c, 0x18, 0x30, 0x60, 0x00
+  0b00001110,
+  0b00011100,
+  0b00111000,
+  0b01111110,
+  0b00001110,
+  0b00011100,
+  0b00111000,
+  0b00110000,
+  0b01100000,
 };
 
 int ElementScreen::elemTop(int idx) const {
@@ -126,7 +161,7 @@ int ElementScreen::drawBattery(DisplayDriver& d, int right) {
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
 
-  const int iconW = 14, iconH = 8, y = 1;
+  const int iconW = 14, iconH = ES_ICON_H, y = 1;
   int x = right - 2 - iconW;            // 2px for the terminal nub at `right`
   d.setColor(DisplayDriver::GREEN);
   d.drawRect(x, y, iconW, iconH);
@@ -135,7 +170,7 @@ int ElementScreen::drawBattery(DisplayDriver& d, int right) {
 
   int left = x;
   if (board.isExternalPowered()) {     // charging: lightning bolt left of battery
-    d.drawXbm(x - 9, y, es_bolt_icon, 8, 8);
+    d.drawXbm(x - 9, y, es_bolt_icon, 8, ES_ICON_H);
     left = x - 9;
   }
   return left;
@@ -150,7 +185,17 @@ void ElementScreen::drawStatusBar(DisplayDriver& d) {
   int cw = d.getTextWidth(clk);
   d.setColor(DisplayDriver::LIGHT);
   d.drawTextRightAlign(d.width(), 0, clk);
-  drawBattery(d, d.width() - cw - 3);
+  int batt_left = drawBattery(d, d.width() - cw - 3);
+
+  // status icons (BT / GPS / muted): right-justified just left of the battery
+  const uint8_t* bm[3]; DisplayDriver::Color col[3]; int ni = 0;
+  if (_task->hasConnection()) { bm[ni] = es_bt_icon;    col[ni] = DisplayDriver::LIGHT; ni++; }
+  if (_task->getGPSState())   { bm[ni] = es_gps_icon;   col[ni] = DisplayDriver::LIGHT; ni++; }
+#ifdef PIN_BUZZER
+  if (_task->isBuzzerQuiet())  { bm[ni] = es_muted_icon; col[ni] = DisplayDriver::RED;  ni++; }
+#endif
+  int ix = batt_left - 1 - 9 * ni;        // 8px glyph + 1px gap each, flush to the battery
+  for (int i = 0; i < ni; i++) { d.setColor(col[i]); d.drawXbm(ix, 1, bm[i], 8, ES_ICON_H); ix += 9; }
 
   // left side: title
   char title[24];
@@ -158,14 +203,6 @@ void ElementScreen::drawStatusBar(DisplayDriver& d) {
   d.setColor(DisplayDriver::GREEN);
   d.setCursor(0, 0);
   d.print(title);
-  int ix = d.getTextWidth(title) + 4;     // status icons follow the title
-
-  // status icons: BT (connected), GPS (on), buzzer muted
-  if (_task->hasConnection()) { d.setColor(DisplayDriver::LIGHT); d.drawXbm(ix, 1, es_bt_icon, 8, 8); ix += 9; }
-  if (_task->getGPSState())   { d.setColor(DisplayDriver::LIGHT); d.drawXbm(ix, 1, es_gps_icon, 8, 8); ix += 9; }
-#ifdef PIN_BUZZER
-  if (_task->isBuzzerQuiet()) { d.setColor(DisplayDriver::RED);   d.drawXbm(ix, 1, es_muted_icon, 8, 8); ix += 9; }
-#endif
 
   d.setColor(DisplayDriver::LIGHT);
   d.fillRect(0, STATUS_H - 2, d.width(), 1);   // separator at y=11

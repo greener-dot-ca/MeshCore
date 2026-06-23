@@ -80,7 +80,7 @@ public:
 // Displayed-time settings: 12/24h format and UTC offset (controls the status-bar
 // clock and the message read-view timestamp).
 class TimeScreen : public ElementScreen {
-  UIElement _items[3];
+  UIElement _items[5];
 protected:
   int pageIndex() const override { return PAGE_TIME; }
   int pageCount() const override { return PAGE_COUNT; }

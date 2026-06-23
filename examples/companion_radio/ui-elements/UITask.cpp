@@ -149,6 +149,11 @@ void UITask::playMorseHops(uint8_t path_len) {
   ToneSeg seq[48];
   uint8_t n = 0;
 
+  // Silent lead-in: right after this returns the UI does a blocking e-ink refresh,
+  // during which buzzer.loop() can't run -- without this the first real tone is held
+  // for the whole refresh and a leading dit sounds like a dah. The stall lands here.
+  seq[n++] = { 0, 30 };
+
   if (path_len == 0xFF) {                 // direct: no hops to count
     seq[n++] = { F, 250 };
     buzzer.playTones(seq, n);

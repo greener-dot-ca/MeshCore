@@ -73,9 +73,12 @@ static const char* gpsLastFixText(const UIElement& e) {
   else               sprintf(b, "%luh ago", s / 3600);
   return b;
 }
-static const char* gpsSatsText(const UIElement&) {
+static const char* gpsSatsText(const UIElement& e) {
   static char b[12];
-  if (gpsEverFixed()) sprintf(b, "%ld", sensors.last_sats); else strcpy(b, "--");
+  LocationProvider* l = sensors.getLocationProvider();
+  if (T(e)->getGPSState() && l) sprintf(b, "%ld", l->satellitesCount());  // live count (shows acquisition before a fix)
+  else if (gpsEverFixed())      sprintf(b, "%ld", sensors.last_sats);     // GPS off: count at last fix
+  else                          strcpy(b, "--");
   return b;
 }
 static const char* gpsLatLonText(const UIElement&) {
@@ -149,18 +152,34 @@ static void timeFmtNext(const UIElement& e) { T(e)->setTimeFormat((T(e)->getTime
 static const char* clockText(const UIElement& e) {
   static char b[12]; T(e)->formatClock(b, sizeof(b)); return b;
 }
-static const char* utcOffsetText(const UIElement& e) {   // "UTC" / "+5:30" / "-8:00"
-  static char b[10];
+// UTC offset is split into sign / hours / half-hour controls -- far fewer clicks
+// than cycling one combined -12..+14 selector. (Sign at offset 0 is a no-op since
+// +0 == -0; set the hours first, then the sign.)
+static const char* const utcSignOpts[] = { "+", "-" };
+static int  utcSignGet(const UIElement& e)  { return T(e)->getUtcOffsetMin() < 0 ? 1 : 0; }
+static void utcSignNext(const UIElement& e) { T(e)->setUtcOffsetMin((int16_t)(-T(e)->getUtcOffsetMin())); }
+
+static const char* utcHoursText(const UIElement& e) {    // magnitude hours: "0".."14"
+  static char b[4];
   int m = T(e)->getUtcOffsetMin();
-  if (m == 0) { strcpy(b, "UTC"); return b; }
-  int a = m < 0 ? -m : m;
-  snprintf(b, sizeof(b), "%c%d:%02d", m < 0 ? '-' : '+', a / 60, a % 60);
+  snprintf(b, sizeof(b), "%d", (m < 0 ? -m : m) / 60);
   return b;
 }
-static void utcOffsetNext(const UIElement& e) {          // step +30 min, wrap -12:00..+14:00
-  int m = T(e)->getUtcOffsetMin() + 30;
-  if (m > 840) m = -720;
-  T(e)->setUtcOffsetMin((int16_t)m);
+static void utcHoursNext(const UIElement& e) {           // step hours 0..14, keep sign + the +30 flag
+  int m = T(e)->getUtcOffsetMin();
+  int sign = m < 0 ? -1 : 1;
+  int mag  = m < 0 ? -m : m;
+  int h = mag / 60 + 1;  if (h > 14) h = 0;
+  int half = (mag % 60) ? 30 : 0;
+  T(e)->setUtcOffsetMin((int16_t)(sign * (h * 60 + half)));
+}
+static bool utcHalfGet(const UIElement& e)    { return (T(e)->getUtcOffsetMin() % 60) != 0; }
+static void utcHalfToggle(const UIElement& e) {          // flip the 30-min part, keeping sign + hours
+  int m = T(e)->getUtcOffsetMin();
+  int sign = m < 0 ? -1 : 1;
+  int mag  = m < 0 ? -m : m;
+  mag = (mag / 60) * 60 + ((mag % 60) ? 0 : 30);
+  T(e)->setUtcOffsetMin((int16_t)(sign * mag));
 }
 static void advertCb(const UIElement& e)    { T(e)->doAdvert(); }
 static void hibernateCb(const UIElement& e) { ((ShutdownScreen*)e.ctx)->initShutdown(); }
@@ -274,8 +293,10 @@ BuzzScreen::BuzzScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, pre
 TimeScreen::TimeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Time") {
   _items[0] = makeLabel("Time", clockText, task);                       // current local time
   _items[1] = makeCycle("Format", task, timeFmtOpts, 2, timeFmtGet, timeFmtNext);
-  _items[2] = makeCycleText("UTC", task, utcOffsetText, utcOffsetNext);
-  _elems = _items; _count = 3;
+  _items[2] = makeCycle("UTC +/-", task, utcSignOpts, 2, utcSignGet, utcSignNext);
+  _items[3] = makeCycleText("Hours", task, utcHoursText, utcHoursNext);   // magnitude 0-14
+  _items[4] = makeToggle("+30 min", task, utcHalfGet, utcHalfToggle);     // half-hour offset
+  _elems = _items; _count = 5;
 }
 
 // ============================================================ MessagesScreen
