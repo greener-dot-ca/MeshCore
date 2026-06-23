@@ -128,3 +128,63 @@ The mechanism: `main.cpp` includes `"UITask.h"` through the per-board
 `-I examples/companion_radio/<module>` include path and globs
 `<…/<module>/*.cpp>`, so swapping the module path swaps the whole UI with no
 shared-code edits.
+
+## Future work
+
+### Nav page
+
+A `PAGE_NAV` that points you toward a target (bearing + distance), GPS-only.
+
+What's already available:
+- **Course/speed** from the GPS: `MicroNMEA::getCourse()` (track angle, m°) and
+  `getSpeed()` — not yet surfaced by `MicroNMEALocationProvider` (needs accessors).
+- **A target location**: `ContactInfo.gps_lat/gps_lon` (6-dp), populated from
+  adverts that share location — so "navigate to a contact" is mesh-native.
+  A manually-marked waypoint ("mark here, guide me back") is a possible v2.
+
+The hard constraint — **the M1 has no compass/magnetometer** (only GPS + RTC on
+I²C; see `ThinkNodeM1SensorManager`). So the only heading is **course-over-ground**,
+which is valid *only while moving*:
+- **Moving:** known travel heading → draw a **relative turn-arrow** toward the
+  target (target bearing − course). COG is jittery below walking speed at the
+  GPS's 1 Hz update, so gate the arrow on a minimum speed.
+- **Stopped:** no heading → show **absolute bearing** as text only
+  ("Brg 045° NE, 1.24 km") and a "move to get heading" hint; a turn-arrow would
+  be meaningless.
+
+Rendering: don't rotate a bitmap (stripes/ugly on the e-ink scaler) — ship 8
+(or 16) precomputed arrow glyphs (N/NE/…/NW) and snap to the nearest octant,
+reusing the `es_gps_icon` nav-arrow style.
+
+Proposed v1: navigate to a selected contact's last shared location; always show
+distance + absolute bearing + speed; show the relative arrow only when moving.
+
+### Unicode glyphs via GNU Unifont
+
+Today all text uses `FreeSans9pt7b` (ASCII `0x20–0x7E` only), and
+`translateUTF8ToBlocks` (`DisplayDriver.h`) collapses every non-ASCII char to a
+single `█`. So accents, symbols, and emoji can't render at all.
+
+GNU Unifont (1-bit, 8×16 / 16×16 bitmaps) could replace this. Sizing vs the ~272 KB
+free flash on the elements build:
+- **Full BMP (incl. CJK/Hangul): won't fit** (~1.5–2 MB).
+- **Western (Latin-1 + Ext-A + punctuation/symbols): ~10–20 KB** — fits easily.
+- **+ Greek/Cyrillic: ~30–50 KB**; + curated emoji: ~+15–60 KB. Still fits.
+
+Per-glyph: 8×16 = 16 B, 16×16 = 32 B, + ~6 B index — vs ~11 B/glyph for FreeSans.
+Unifont is slightly taller (16 px vs ~13 px caps) and monospace (~25 chars/line vs
+~18–21).
+
+Two approaches: **(a)** keep FreeSans for ASCII and use Unifont only as a fallback
+for the chars it lacks (smallest, preserves the current look); or **(b)** render the
+whole UI — element text, status bar, icons, the `█` blocks — in Unifont monospace for
+full coverage.
+
+Implementation sketch: a host generator (`tools/gen_unifont.py`) filters the Unifont
+`.hex` to the chosen ranges into a packed `unifont_glyphs.h` (sorted codepoint index +
+1-bit blob); a UTF-8-aware blitter in `GxEPDDisplay` (behind a `UI_FONT_UNIFONT` flag,
+so OLED variants are untouched) does per-codepoint lookup and blits glyphs at native
+physical resolution. Caveats: emoji live in Plane 1 (`unifont_upper`, 4-byte UTF-8),
+and Unifont emoji are crude **monochrome** 16×16 line-art — small icons, not color
+emoji. A dynamic battery bar would also have to stay a drawn widget (a static 🔋 glyph
+loses the charge level).
