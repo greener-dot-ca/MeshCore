@@ -45,8 +45,8 @@ static const char* chargingText(const UIElement&) {
   return board.isExternalPowered() ? "Yes" : "No";
 }
 static const char* appConnText(const UIElement& e)  { return T(e)->hasConnection() ? "Connected" : "--"; }
-static const char* unreadText(const UIElement& e) {
-  static char b[8]; sprintf(b, "%d", T(e)->getMsgCount()); return b;
+static const char* unreadText(const UIElement&) {   // readable text messages (matches the Messages list)
+  static char b[8]; sprintf(b, "%d", the_mesh.getDisplayMsgCount()); return b;
 }
 
 // ----- GPS getters -----
