@@ -183,15 +183,17 @@ void UITask::playMorseHops(uint8_t path_len) {
 void UITask::playMsgSound(uint8_t path_len) {
 #if defined(PIN_BUZZER)
   switch (_node_prefs ? _node_prefs->buzzer_mode : 0) {
-    case 1:   // simple beep
-      buzzer.play("beep:d=8,o=5,b=200:a");
+    case 1:   // simple beep (leading 8p absorbs the post-call e-ink refresh stall)
+      buzzer.play("beep:d=8,o=5,b=200:8p,a");
       break;
     case 2:   // morse the hop count
       playMorseHops(path_len);
       break;
-    case 0:   // CTU phone ringtone (approximation -- tweak by ear)
-    default:
-      buzzer.play("CTU:d=16,o=6,b=160:a5,c,a5,c,a5,c,p,a5,c,a5,c,a5,c");
+    case 0:   // Cisco IP-phone ring: F6 beep-pairs then a fast B6<->B5 warble
+    default:  // (o=5 so bare 'b' = B5 warbles against the explicit b6)
+      buzzer.play("Cisco:d=32,o=5,b=300:"
+                  "8p,"   // leading rest absorbs the post-call e-ink refresh stall (else the first beep stretches)
+                  "f6,p,f6,4p,p,f6,p,f6,2p,p,b6,p,b6,p,b6,p,b6,p,b,p,b,p,b,p,b,p,b,p,b,p,b,p,b");
       break;
   }
 #endif
