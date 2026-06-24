@@ -153,73 +153,88 @@ bool ElementScreen::handleInput(char c) {
   return false;
 }
 
-// Draws a small battery whose terminal nub ends at x==`right`; returns its left x
-// (or the bolt's left x when charging).
+// Battery level as a single Block-Elements glyph (▁..█, U+2581..2588): a one-char
+// fuel gauge whose right edge sits at `right`. Returns its left x (the bolt's, when
+// charging). The eighth-blocks are 3-byte UTF-8 E2 96 (80+level).
 int ElementScreen::drawBattery(DisplayDriver& d, int right) {
   uint16_t mv = _task->getBattMilliVolts();
   int pct = ((int)mv - BATT_MIN_MILLIVOLTS) * 100 / (BATT_MAX_MILLIVOLTS - BATT_MIN_MILLIVOLTS);
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
+  int level = (pct * 8 + 50) / 100;          // 0..8 eighths, rounded
+  if (level < 1) level = 1;                  // always show at least the 1/8 sliver
+  if (level > 8) level = 8;
 
-  const int iconW = 14, iconH = ES_ICON_H, y = 1;
-  int x = right - 2 - iconW;            // 2px for the terminal nub at `right`
+  char blk[4] = { (char)0xE2, (char)0x96, (char)(0x80 + level), 0 };
+  int w = d.getTextWidth(blk);
   d.setColor(DisplayDriver::GREEN);
-  d.drawRect(x, y, iconW, iconH);
-  d.fillRect(x + iconW, y + iconH / 4, 2, iconH / 2);          // terminal nub
-  d.fillRect(x + 2, y + 2, pct * (iconW - 4) / 100, iconH - 4); // fill
+  d.setCursor(right - w, 2);
+  d.print(blk);
+  int left = right - w;
 
-  int left = x;
-  if (board.isExternalPowered()) {     // charging: lightning bolt left of battery
-    d.drawXbm(x - 9, y, es_bolt_icon, 8, ES_ICON_H);
-    left = x - 9;
+  if (board.isExternalPowered()) {           // charging: ⚡ left of the gauge
+    const char* bolt = "\xE2\x9A\xA1";        // U+26A1
+    int bw = d.getTextWidth(bolt);
+    d.setColor(DisplayDriver::GREEN);
+    d.setCursor(left - bw, 2);
+    d.print(bolt);
+    left -= bw;
   }
   return left;
 }
 
 void ElementScreen::drawStatusBar(DisplayDriver& d) {
   d.setTextSize(1);
+  const int ty = 2;   // 16px glyphs span y=2..18 in the 20px bar
 
   // right side: clock (rightmost), then battery (+charge bolt) to its left
   char clk[12];
   uiFormatClock(_prefs, _task->currentEpoch(), clk, sizeof(clk));
   int cw = d.getTextWidth(clk);
   d.setColor(DisplayDriver::LIGHT);
-  d.drawTextRightAlign(d.width(), 0, clk);
-  int batt_left = drawBattery(d, d.width() - cw - 3);
+  d.drawTextRightAlign(d.width(), ty, clk);
+  int x = drawBattery(d, d.width() - cw - 4);   // returns left edge of battery (or bolt)
 
-  // status icons (app connected / GPS / muted): right-justified just left of the battery
-  const uint8_t* bm[3]; DisplayDriver::Color col[3]; int ni = 0;
-  if (_task->hasConnection()) { bm[ni] = es_app_icon;   col[ni] = DisplayDriver::LIGHT; ni++; }
-  if (_task->getGPSState())   { bm[ni] = es_gps_icon;   col[ni] = DisplayDriver::LIGHT; ni++; }
+  // status icons (app / GPS / muted) as Unifont symbols, right-justified before battery
+  const char* icons[3]; DisplayDriver::Color col[3]; int ni = 0;
+  if (_task->hasConnection()) { icons[ni] = "\xF0\x9F\x93\xB1"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📱
+  if (_task->getGPSState())   { icons[ni] = "\xF0\x9F\x93\x8D"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📍
 #ifdef PIN_BUZZER
-  if (_task->isBuzzerQuiet())  { bm[ni] = es_muted_icon; col[ni] = DisplayDriver::RED;  ni++; }
+  if (_task->isBuzzerQuiet())  { icons[ni] = "\xF0\x9F\x94\x87"; col[ni] = DisplayDriver::RED;  ni++; } // 🔇
 #endif
-  int ix = batt_left - 1 - 9 * ni;        // 8px glyph + 1px gap each, flush to the battery
-  for (int i = 0; i < ni; i++) { d.setColor(col[i]); d.drawXbm(ix, 1, bm[i], 8, ES_ICON_H); ix += 9; }
+  for (int i = ni - 1; i >= 0; i--) {            // place right-to-left, flush to the battery
+    x -= d.getTextWidth(icons[i]) + 1;
+    d.setColor(col[i]);
+    d.setCursor(x, ty);
+    d.print(icons[i]);
+  }
 
   // left side: title
   char title[24];
   d.translateUTF8ToBlocks(title, _title ? _title : "", sizeof(title));
   d.setColor(DisplayDriver::GREEN);
-  d.setCursor(0, 0);
+  d.setCursor(0, ty);
   d.print(title);
 
   d.setColor(DisplayDriver::LIGHT);
-  d.fillRect(0, STATUS_H - 2, d.width(), 1);   // separator at y=11
+  d.fillRect(0, STATUS_H - 2, d.width(), 1);   // separator
 }
 
 void ElementScreen::drawPageDots(DisplayDriver& d) {
   int n = pageCount();
   if (n <= 1) return;
   int cur = pageIndex();
-  const int spacing = 8;
-  int cy = USABLE_BOTTOM - 3;
-  int x0 = d.width() / 2 - spacing * (n - 1) / 2;
+  const char* full = "\xE2\x97\x8F";   // ● U+25CF (current page)
+  const char* ring = "\xE2\x97\x8B";   // ○ U+25CB (other pages)
+  int gw = d.getTextWidth(full);
+  int spacing = gw + 2;
+  int x = d.width() / 2 - (spacing * (n - 1) + gw) / 2;
+  int y = USABLE_BOTTOM - 16;          // bottom-align the 16px glyph cell
   d.setColor(DisplayDriver::LIGHT);
   for (int i = 0; i < n; i++) {
-    int cx = x0 + i * spacing;
-    if (i == cur) d.fillRect(cx - 2, cy - 2, 5, 5);   // current page: a bit larger
-    else          d.fillRect(cx - 1, cy - 1, 3, 3);   // other pages: same base size
+    d.setCursor(x, y);
+    d.print(i == cur ? full : ring);
+    x += spacing;
   }
 }
 

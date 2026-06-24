@@ -345,65 +345,55 @@ void MessagesScreen::openDetail(int display_idx) {
 #define WRAP_MAX_LINES 24
 #define WRAP_LINE_CAP  48
 
-// Greedy word-wrap of `g` to `max_w` pixels into lines[]. Returns line count.
-// `g` is already display-glyph text (1 byte per glyph, via translateUTF8ToBlocks)
-// so widths measure exactly as drawn and breaks never split a UTF-8 sequence.
-// Words longer than the line are hard-broken so nothing ever overruns the width.
+static int utf8CharLen(unsigned char c) {
+  if (c < 0x80) return 1;
+  if ((c & 0xE0) == 0xC0) return 2;
+  if ((c & 0xF0) == 0xE0) return 3;
+  if ((c & 0xF8) == 0xF0) return 4;
+  return 1;
+}
+
+// Column-wrap `g` (UTF-8) to `max_w` pixels into lines[]. Returns line count.
+// Preserves all whitespace and honors explicit '\n' -- it does NOT reflow words
+// or collapse spaces -- so ASCII art keeps its exact layout. Long lines hard-wrap
+// at the right edge. Advances whole codepoints so multibyte glyphs never split.
 static int wrapText(DisplayDriver& d, int max_w, const char* g,
                     char lines[][WRAP_LINE_CAP], int max_lines) {
   int nl = 0, li = 0;
   lines[0][0] = 0;
-  char cand[WRAP_LINE_CAP + 2];
+  char cand[WRAP_LINE_CAP + 4];
   const char* p = g;
   while (*p && nl < max_lines) {
-    if (*p == '\n') {                                   // explicit break
+    if (*p == '\n') {                                   // explicit break (preserved)
       lines[nl][li] = 0;
       if (++nl < max_lines) { li = 0; lines[nl][0] = 0; }
       p++; continue;
     }
-    while (*p == ' ') p++;                              // collapse run of spaces
-    if (!*p || *p == '\n') continue;
+    int cl = utf8CharLen((unsigned char)*p);            // bytes in this codepoint
+    for (int k = 1; k < cl; k++) if (!p[k]) { cl = 1; break; }   // guard truncation
 
-    const char* w = p;                                 // next word
-    while (*p && *p != ' ' && *p != '\n') p++;
-    int wlen = (int)(p - w), wi = 0;
-
-    while (wi < wlen && nl < max_lines) {               // place word, splitting if needed
-      bool space = (li > 0);                            // separate from prior word
-      int fit = 0;                                      // word chars that fit on this line
-      while (wi + fit < wlen && li + (space ? 1 : 0) + fit < WRAP_LINE_CAP - 1) {
-        int t = li;
-        memcpy(cand, lines[nl], li);
-        if (space) cand[t++] = ' ';
-        memcpy(cand + t, w + wi, fit + 1);
-        cand[t + fit + 1] = 0;
-        if ((int)d.getTextWidth(cand) > max_w) break;
-        fit++;
-      }
-      if (fit == 0) {                                   // nothing more fits on this line
-        if (li == 0) {                                  // ... and the line is empty: force 1 char
-          lines[nl][0] = w[wi++]; lines[nl][1] = 0; li = 1;
-        }
-        if (++nl >= max_lines) break;
-        li = 0; lines[nl][0] = 0;
-      } else {
-        if (space) lines[nl][li++] = ' ';
-        memcpy(lines[nl] + li, w + wi, fit);
-        li += fit; lines[nl][li] = 0;
-        wi += fit;
-        if (wi < wlen) {                                // word continues on the next line
-          if (++nl >= max_lines) break;
-          li = 0; lines[nl][0] = 0;
-        }
-      }
+    bool overflow = (li + cl >= WRAP_LINE_CAP);
+    if (!overflow) {
+      memcpy(cand, lines[nl], li);
+      memcpy(cand + li, p, cl);
+      cand[li + cl] = 0;
+      if ((int)d.getTextWidth(cand) > max_w) overflow = true;
     }
+    if (overflow && li > 0) {                           // wrap before this glyph
+      lines[nl][li] = 0;
+      if (++nl >= max_lines) break;
+      li = 0; lines[nl][0] = 0;
+    }
+    memcpy(lines[nl] + li, p, cl);
+    li += cl; lines[nl][li] = 0;
+    p += cl;
   }
   if (li > 0 && nl < max_lines) { lines[nl][li] = 0; nl++; }
   return nl;
 }
 
-static const int MD_BODY_TOP = 26;   // below the 2-line header (name + date/time)
-static const int MD_BOTTOM   = 124;
+static const int MD_BODY_TOP = 40;   // below the 2-line 16px header (name + date/time)
+static const int MD_BOTTOM   = 196;
 static int mdLinesPerPage() { return (MD_BOTTOM - MD_BODY_TOP) / UIELEM_ROW_H; }
 
 bool MessageDetailScreen::scrollDown() {
@@ -417,13 +407,31 @@ int MessageDetailScreen::render(DisplayDriver& d) {
 
   // header line 1: sender, or "#channel" for a channel message (direction/hops
   // live in the list, not repeated here)
-  char name[40], hdr[48];
-  // channel names are already stored with a leading '#'; only add one if absent
-  if (_msg.is_channel && _msg.sender[0] != '#') snprintf(name, sizeof(name), "#%s", _msg.sender);
-  else                                          snprintf(name, sizeof(name), "%s", _msg.sender);
+  // For a channel message the sender's node name is embedded in the body as a
+  // "Name: " prefix (out.sender holds the *channel* name). Lift it onto the header
+  // line ("Name #channel") so the body stays clean -- which lets ASCII art render.
+  // Direct messages already have the node name in out.sender and a clean body.
+  const char* body = _msg.body;
+  char hdr[56];
+  if (_msg.is_channel) {
+    const char* chan = _msg.sender;
+    const char* sep = strstr(_msg.body, ": ");
+    if (sep) {
+      char who[28]; int n = (int)(sep - _msg.body);
+      if (n > (int)sizeof(who) - 1) n = sizeof(who) - 1;
+      memcpy(who, _msg.body, n); who[n] = 0;
+      snprintf(hdr, sizeof(hdr), "%s %s%s", who, chan[0] == '#' ? "" : "#", chan);
+      body = sep + 2;                                   // body after the "Name: " prefix
+    } else {
+      snprintf(hdr, sizeof(hdr), "%s%s", chan[0] == '#' ? "" : "#", chan);
+    }
+  } else {
+    snprintf(hdr, sizeof(hdr), "%s", _msg.sender);
+  }
+  char hb[64];
   d.setColor(DisplayDriver::GREEN);
-  d.translateUTF8ToBlocks(hdr, name, sizeof(hdr));
-  d.drawTextEllipsized(0, 0, d.width(), hdr);
+  d.translateUTF8ToBlocks(hb, hdr, sizeof(hb));
+  d.drawTextEllipsized(0, 2, d.width(), hb);
 
   // header line 2: "<date> - <route>" (date honors the Time page format + offset)
   char date[24], when[40];
@@ -436,16 +444,16 @@ int MessageDetailScreen::render(DisplayDriver& d) {
     snprintf(when, sizeof(when), "%s - %uh - %ub", date, (unsigned)_msg.hops, hash_bytes);
   }
   d.setColor(DisplayDriver::LIGHT);
-  d.setCursor(0, 12);
+  d.setCursor(0, 20);
   d.print(when);
-  d.fillRect(0, 23, d.width(), 1);
+  d.fillRect(0, 38, d.width(), 1);
 
   // body, word-wrapped (reserve a right gutter for the list scrollbar). Translate
   // to display glyphs once so wrap widths match drawing and breaks are UTF-8 safe.
   const int gutter = 4;
   char lines[WRAP_MAX_LINES][WRAP_LINE_CAP];
   char body_glyphs[MAX_FRAME_SIZE];
-  d.translateUTF8ToBlocks(body_glyphs, _msg.body, sizeof(body_glyphs));
+  d.translateUTF8ToBlocks(body_glyphs, body, sizeof(body_glyphs));   // cleaned body (no "Name: " prefix)
   _total_lines = wrapText(d, d.width() - 4 - gutter, body_glyphs, lines, WRAP_MAX_LINES);
   if (_scroll_line >= _total_lines) _scroll_line = 0;
 
@@ -476,45 +484,34 @@ int MessageDetailScreen::render(DisplayDriver& d) {
 }
 
 // ============================================================ HelpScreen
-// Button glyphs matching the device's two physical keys (8x8, MSB-first).
-static const uint8_t help_tri[]  = {   // triangle key (top / user button)
-  0b00011000, 0b00011000, 0b00111100, 0b00111100,
-  0b01111110, 0b01111110, 0b11111111, 0b00000000,
-};
-static const uint8_t help_circ[] = {   // circle key (back button)
-  0b00111100, 0b01111110, 0b11100111, 0b11000011,
-  0b11000011, 0b11100111, 0b01111110, 0b00111100,
-};
-
 int HelpScreen::render(DisplayDriver& d) {
   d.setTextSize(1);
   d.setColor(DisplayDriver::GREEN);
-  d.setCursor(0, 0);
+  d.setCursor(0, 2);
   d.print("Help");
   d.setColor(DisplayDriver::LIGHT);
-  d.fillRect(0, 11, d.width(), 1);
+  d.fillRect(0, 20, d.width(), 1);
 
-  // ---- status-bar icon legend (draw the real glyphs next to their meaning) ----
-  const uint8_t* icons[] = { es_app_icon, es_gps_icon, es_muted_icon, es_bolt_icon };
-  const char*    labels[] = { "App linked", "GPS on", "Sound muted", "Charging" };
-  int y = 15;
+  // ---- status-bar icon legend (the same Unifont glyphs the bar uses) ----
+  const char* icons[]  = { "\xF0\x9F\x93\xB1", "\xF0\x9F\x93\x8D", "\xF0\x9F\x94\x87", "\xE2\x9A\xA1" }; // 📱📍🔇⚡
+  const char* labels[] = { "App linked", "GPS on", "Sound muted", "Charging" };
+  int y = 24;
   for (int i = 0; i < 4; i++) {
-    d.drawXbm(2, y + 1, icons[i], 8, ES_ICON_H);
-    d.setCursor(14, y);
-    d.print(labels[i]);
-    y += 11;
+    d.setCursor(2, y);  d.print(icons[i]);
+    d.setCursor(22, y); d.print(labels[i]);
+    y += 18;
   }
 
-  // ---- two-button navigation ----
-  y += 3;
-  d.drawXbm(2, y + 1, help_tri, 8, 8);
-  d.setCursor(14, y);       d.print("click next");
-  d.setCursor(14, y + 11);  d.print("hold prev  2x pick");
-  y += 24;
-  d.drawXbm(2, y + 1, help_circ, 8, 8);
-  d.setCursor(14, y);       d.print("click page");
-  d.setCursor(14, y + 11);  d.print("hold back  2x home");
-  d.setCursor(14, y + 22);  d.print("3x  this help");
+  // ---- two-button navigation (▲ = top key, ● = back key) ----
+  y += 4;
+  d.setCursor(2, y);  d.print("\xE2\x96\xB2");                 // ▲
+  d.setCursor(22, y);      d.print("click: next");
+  d.setCursor(22, y + 18); d.print("hold: prev  2x: pick");
+  y += 40;
+  d.setCursor(2, y);  d.print("\xE2\x97\x8F");                 // ●
+  d.setCursor(22, y);      d.print("click: page");
+  d.setCursor(22, y + 18); d.print("hold: back  2x: home");
+  d.setCursor(22, y + 36); d.print("3x: this help");
 
   return 3600000;   // static: only repaints on interaction (which dismisses it)
 }

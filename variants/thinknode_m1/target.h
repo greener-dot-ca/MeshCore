@@ -9,7 +9,11 @@
 #include <helpers/SensorManager.h>
 #include <helpers/sensors/LocationProvider.h>
 #ifdef DISPLAY_CLASS
-  #include <helpers/ui/GxEPDDisplay.h>
+  #ifdef USE_NATIVE_EINK_UI
+    #include "NativeEinkDisplay.h"   // native 200x200 renderer (ui-elements module)
+  #else
+    #include <helpers/ui/GxEPDDisplay.h>
+  #endif
   #include <helpers/ui/MomentaryButton.h>
 #endif
 

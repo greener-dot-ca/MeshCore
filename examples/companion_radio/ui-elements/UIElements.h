@@ -3,9 +3,10 @@
 #include <helpers/ui/DisplayDriver.h>
 #include <stdint.h>
 
-// Per-element layout (logical px). One element occupies `rows` text rows
-// plus a small padding above/below for the selection border.
-#define UIELEM_ROW_H  11
+// Per-element layout (native px). One element occupies `rows` text rows
+// plus a small padding above/below for the selection border. Row height fits
+// the 16px Unifont cell (NativeEinkDisplay) plus breathing room.
+#define UIELEM_ROW_H  18
 #define UIELEM_PAD     2
 
 enum class ElemKind : uint8_t { Label, Toggle, Action, OptionCycle };

@@ -38,9 +38,10 @@ protected:
   int         _scroll_y;    // pixel scroll offset into the content column
   bool        _show_focus;  // draw the selection bar (false = screen is sleeping)
 
-  static const int STATUS_H      = 13;   // top status-bar height
-  static const int DOTS_H        = 6;    // bottom page-dot strip (fits the 5px current dot)
-  static const int USABLE_BOTTOM = 126;  // e-ink usable logical height (~2px panel margin)
+  // native 200x200 panel geometry (NativeEinkDisplay renders 1:1, 16px Unifont)
+  static const int STATUS_H      = 20;   // top status-bar height (16px text + separator)
+  static const int DOTS_H        = 16;   // bottom page-dot strip (fits a 16px ●/○ glyph)
+  static const int USABLE_BOTTOM = 198;  // e-ink usable height (~2px panel margin)
   static const int SPACING       = 0;    // gap between elements
 
   int contentTop()    const { return STATUS_H + 1; }

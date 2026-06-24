@@ -73,31 +73,20 @@ UIElement makeMessageRow(const char* line, void* ctx, ElemTextGetFn time, ElemAc
   return e;
 }
 
-// ---- type glyphs (drawn with primitives; unicode can't be used because
-// translateUTF8ToBlocks would turn it into a block char) ----
+// Type glyphs are now real Unifont symbols (NativeEinkDisplay renders UTF-8), so
+// they match the 16px text. UTF-8 bytes written explicitly to avoid source-charset
+// surprises.
+static const char* const SYM_BOX_OFF = "\xE2\x98\x90";  // U+2610 ☐
+static const char* const SYM_BOX_ON  = "\xE2\x98\x91";  // U+2611 ☑
+static const char* const SYM_PLAY    = "\xE2\x96\xB6";  // U+25B6 ▶
+static const char* const SYM_LEFT    = "\xE2\x97\x80";  // U+25C0 ◀
 
-// checkbox: empty when off, filled when on
-static void glyphCheckbox(DisplayDriver& d, int x, int y, bool on) {
-  d.drawRect(x, y, 9, 9);
-  if (on) d.fillRect(x + 2, y + 2, 5, 5);
-}
-// filled cycle arrows, drawn as XBMs (8x9) -- stacked 1px fillRects stripe on
-// the e-ink scaler, the same reason glyphPlay below uses an XBM.
-static void glyphTriRight(DisplayDriver& d, int x, int y, int) {   // ► apex right
-  static const uint8_t icon[] = { 0x80, 0xC0, 0xF0, 0xFC, 0xFF, 0xFC, 0xF0, 0xC0, 0x80 };
-  d.drawXbm(x, y, icon, 8, 9);
-}
-static void glyphTriLeft(DisplayDriver& d, int x, int y, int) {    // ◄ apex left
-  static const uint8_t icon[] = { 0x01, 0x03, 0x0F, 0x3F, 0xFF, 0x3F, 0x0F, 0x03, 0x01 };
-  d.drawXbm(x, y, icon, 8, 9);
-}
-// filled play triangle (8x9, base left, apex right). Drawn as an XBM so the
-// e-ink scaler fills the inter-pixel gaps (stacked 1px fillRects would stripe).
-static void glyphPlay(DisplayDriver& d, int x, int y) {
-  static const uint8_t play_icon[] = {
-    0x80, 0xC0, 0xF0, 0xFC, 0xFF, 0xFC, 0xF0, 0xC0, 0x80
-  };
-  d.drawXbm(x, y, play_icon, 8, 9);
+// draw a symbol whose right edge sits at `right`; returns its left x
+static int drawSymRight(DisplayDriver& d, int right, int y, const char* sym) {
+  int w = d.getTextWidth(sym);
+  d.setCursor(right - w, y);
+  d.print(sym);
+  return right - w;
 }
 
 void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const {
@@ -133,20 +122,17 @@ void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const 
 
   // single-row: caption on the left, a type glyph (+ value) on the right
   int label_right = rightX;
-  const int ts = 8;   // cycle-arrow glyph width
 
   switch (kind) {
     case ElemKind::Toggle: {
       bool on = get_bool && get_bool(*this);
       d.setColor(fg);
-      glyphCheckbox(d, rightX - 9, ty, on);
-      label_right = rightX - 9 - 3;
+      label_right = drawSymRight(d, rightX, ty, on ? SYM_BOX_ON : SYM_BOX_OFF) - 3;
       break;
     }
     case ElemKind::Action: {
       d.setColor(fg);
-      glyphPlay(d, rightX - 8, ty);   // play/▶ = "run this"
-      label_right = rightX - 8 - 3;
+      label_right = drawSymRight(d, rightX, ty, SYM_PLAY) - 3;   // ▶ = "run this"
       break;
     }
     case ElemKind::OptionCycle: {
@@ -161,13 +147,11 @@ void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const 
       d.translateUTF8ToBlocks(vbuf, (val && val[0]) ? val : "", sizeof(vbuf));
       int vw = d.getTextWidth(vbuf);
       d.setColor(fg);
-      glyphTriRight(d, rightX - ts, ty + 2, ts);          // ►
-      int valx = rightX - ts - 2 - vw;
-      d.setColor(fg);
+      int rax = drawSymRight(d, rightX, ty, SYM_PLAY);     // ▶ on the right
+      int valx = rax - 2 - vw;
       d.setCursor(valx, ty);
       d.print(vbuf);
-      glyphTriLeft(d, valx - 2 - ts, ty + 2, ts);         // ◄
-      label_right = valx - 2 - ts - 3;
+      label_right = drawSymRight(d, valx - 2, ty, SYM_LEFT) - 3;   // ◀ left of value
       break;
     }
     case ElemKind::Label: {
