@@ -121,6 +121,11 @@ public:
   bool getGPSState();
   void toggleGPS();
   void doAdvert();
+  void forceFullRefresh();                 // full e-ink refresh to clear partial-update ghosting
+  bool getOffGrid() const;                 // "off-grid" = client-repeat (this node also relays)
+  void toggleOffGrid();
+  int  getFreqPreset() const;              // index into the 433/869/918 MHz presets (0 if off-preset)
+  void cycleFreqPreset();                  // step to the next frequency preset + retune
 
   // from AbstractUITask
   void msgRead(int msgcount) override;

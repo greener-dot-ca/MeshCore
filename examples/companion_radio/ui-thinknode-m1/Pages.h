@@ -40,7 +40,7 @@ public:
 };
 
 class MeshScreen : public ElementScreen {
-  UIElement _items[9];
+  UIElement _items[11];
 protected:
   int pageIndex() const override { return PAGE_MESH; }
   int pageCount() const override { return PAGE_COUNT; }

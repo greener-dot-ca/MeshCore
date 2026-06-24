@@ -34,6 +34,7 @@ public:
 
   bool isOn() override { return _isOn; }
   bool isEink() override { return true; }
+  void fullRefresh() override;   // request a full refresh on the next endFrame
   void turnOn() override;
   void turnOff() override;
   void clear() override;

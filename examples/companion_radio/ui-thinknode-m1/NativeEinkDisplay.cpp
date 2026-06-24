@@ -185,10 +185,24 @@ void NativeEinkDisplay::translateUTF8ToBlocks(char* dest, const char* src, size_
   dest[i] = 0;
 }
 
+// Clear accumulated ghosting by cycling the whole screen black->white using the
+// NORMAL partial-update path (which works reliably on this panel), then letting
+// the caller repaint content. A true full refresh (display(false)) or a mid-
+// session init() leaves this SSD1681 unable to render cleanly afterwards (blank /
+// corrupt), so we deliberately stay in partial mode and just exercise every pixel
+// through a full black/white swing instead.
+void NativeEinkDisplay::fullRefresh() {
+  display.fillScreen(GxEPD_BLACK);
+  display.display(true);          // whole screen -> black (partial)
+  display.fillScreen(GxEPD_WHITE);
+  display.display(true);          // whole screen -> white (partial)
+  last_display_crc_value = 0;     // force the next render to repaint content
+}
+
 void NativeEinkDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc != last_display_crc_value) {
-    display.display(true);                     // partial refresh
+    display.display(true);                      // partial (auto-promoted to full right after init)
     last_display_crc_value = crc;
   }
 }

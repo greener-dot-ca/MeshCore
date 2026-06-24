@@ -94,6 +94,7 @@ public:
   const char *getNodeName();
   NodePrefs *getNodePrefs();
   uint32_t getBLEPin();
+  void setRadioFreq(float mhz);   // retune to a new frequency (MHz) + persist
 
   void loop();
   void handleCmdFrame(size_t len);

@@ -132,6 +132,55 @@ void UITask::doAdvert() {
   }
 }
 
+void UITask::forceFullRefresh() {
+  if (_display != NULL) {
+    _display->fullRefresh();   // full (ghost-clearing) refresh on the next paint
+    _next_refresh = 0;         // repaint now so endFrame runs the full update
+    if (_display->isOn()) _auto_off = millis() + AUTO_OFF_MILLIS;
+  }
+}
+
+// "Off-grid" mode = client-repeat: this companion node also forwards/relays mesh
+// traffic (MyMesh::allowPacketForward), so every node helps carry the mesh. Only
+// flips the flag + persists -- it does NOT touch radio params (freq/sf/bw).
+bool UITask::getOffGrid() const {
+  return _node_prefs && _node_prefs->client_repeat;
+}
+
+void UITask::toggleOffGrid() {
+  if (!_node_prefs) return;
+  _node_prefs->client_repeat = _node_prefs->client_repeat ? 0 : 1;
+  the_mesh.savePrefs();
+  notify(UIEventType::ack);
+  showAlert(_node_prefs->client_repeat ? "Off-grid: ON" : "Off-grid: OFF", 800);
+  _next_refresh = 0;
+}
+
+// Frequency presets (MHz). These match the client-repeat allowed bands
+// (repeat_freq_ranges in MyMesh), so off-grid repeat stays valid on each.
+static const float FREQ_PRESETS[] = { 433.0f, 869.495f, 918.0f };
+static const int   FREQ_PRESET_COUNT = sizeof(FREQ_PRESETS) / sizeof(FREQ_PRESETS[0]);
+
+int UITask::getFreqPreset() const {
+  if (!_node_prefs) return 0;
+  for (int i = 0; i < FREQ_PRESET_COUNT; i++) {
+    float d = _node_prefs->freq - FREQ_PRESETS[i];
+    if (d > -0.05f && d < 0.05f) return i;
+  }
+  return 0;   // current freq isn't a preset; show the first
+}
+
+void UITask::cycleFreqPreset() {
+  if (!_node_prefs) return;
+  int idx = (getFreqPreset() + 1) % FREQ_PRESET_COUNT;
+  the_mesh.setRadioFreq(FREQ_PRESETS[idx]);   // retune + persist
+  notify(UIEventType::ack);
+  char msg[24];
+  snprintf(msg, sizeof(msg), "Freq: %.3f MHz", FREQ_PRESETS[idx]);
+  showAlert(msg, 1000);
+  _next_refresh = 0;
+}
+
 void UITask::notify(UIEventType t) {
 #if defined(PIN_BUZZER)
   // Incoming-message sounds are played from newMsg() instead, which knows the

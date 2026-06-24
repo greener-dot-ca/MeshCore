@@ -182,6 +182,12 @@ static void utcHalfToggle(const UIElement& e) {          // flip the 30-min part
   T(e)->setUtcOffsetMin((int16_t)(sign * mag));
 }
 static void advertCb(const UIElement& e)    { T(e)->doAdvert(); }
+static void fullRefreshCb(const UIElement& e) { T(e)->forceFullRefresh(); }
+static bool offGridGet(const UIElement& e)    { return T(e)->getOffGrid(); }
+static void offGridToggle(const UIElement& e) { T(e)->toggleOffGrid(); }
+static const char* const freqOpts[] = { "433", "869", "918" };
+static int  freqGet(const UIElement& e)  { return T(e)->getFreqPreset(); }
+static void freqNext(const UIElement& e) { T(e)->cycleFreqPreset(); }
 static void hibernateCb(const UIElement& e) { ((ShutdownScreen*)e.ctx)->initShutdown(); }
 
 // ----- message element callbacks -----
@@ -250,21 +256,24 @@ HomeScreen::HomeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, pre
   _items[2] = makeLabel("Messages", unreadText, task);
   _items[3] = makeLabel("Uptime",   uptimeText,  task);
   _items[4] = makeLabel("Queue",    queueText,   task);
-  _elems = _items; _count = 5;     // BT/conn now shown as a status-bar icon
+  _items[5] = makeAction("Full Refresh", task, fullRefreshCb);    // clear e-ink ghosting
+  _elems = _items; _count = 6;     // BT/conn now shown as a status-bar icon
 }
 
 // ============================================================ MeshScreen
 MeshScreen::MeshScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Mesh") {
-  _items[0] = makeAction("Send Advert", task, advertCb);
-  _items[1] = makeLabel("Contacts", contactsText, task);
-  _items[2] = makeLabel("Sent F/D", sentText,     task);
-  _items[3] = makeLabel("Recv F/D", recvText,     task);
-  _items[4] = makeLabel("Airtime",  airtimeText,  task);
-  _items[5] = makeLabel("Noise",    noiseText,    task);
-  _items[6] = makeLabel("RSSI",     rssiText,     task);
-  _items[7] = makeLabel("SNR",      snrText,      task);
-  _items[8] = makeLabel("Queue",    queueText,    task);
-  _elems = _items; _count = 9;
+  _items[0]  = makeAction("Send Advert", task, advertCb);
+  _items[1]  = makeToggle("Off-grid", task, offGridGet, offGridToggle);   // client-repeat / relay
+  _items[2]  = makeCycle("Off grid freq", task, freqOpts, 3, freqGet, freqNext);   // 433/869/918 MHz preset
+  _items[3]  = makeLabel("Contacts", contactsText, task);
+  _items[4]  = makeLabel("Sent F/D", sentText,     task);
+  _items[5]  = makeLabel("Recv F/D", recvText,     task);
+  _items[6]  = makeLabel("Airtime",  airtimeText,  task);
+  _items[7]  = makeLabel("Noise",    noiseText,    task);
+  _items[8]  = makeLabel("RSSI",     rssiText,     task);
+  _items[9]  = makeLabel("SNR",      snrText,      task);
+  _items[10] = makeLabel("Queue",    queueText,    task);
+  _elems = _items; _count = 11;
 }
 
 // ============================================================ GPSScreen

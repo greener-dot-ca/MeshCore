@@ -19,6 +19,35 @@ void StrHelper::strzcpy(char* dest, const char* src, size_t buf_sz) {
   }
 }
 
+void StrHelper::sanitizeText(char* dest, const char* src, size_t buf_sz) {
+  if (buf_sz == 0) return;
+  size_t di = 0;
+  const unsigned char* s = (const unsigned char*)src;
+  while (*s && di + 1 < buf_sz) {
+    unsigned char c = *s;
+    if (c < 0x80) {                               // ASCII
+      if (c >= 0x20 && c != 0x7F) dest[di++] = (char)c;   // printable
+      else                        dest[di++] = '?';       // control / DEL
+      s++;
+      continue;
+    }
+    int seq;                                      // UTF-8 multi-byte lead
+    if      ((c & 0xE0) == 0xC0) seq = 2;
+    else if ((c & 0xF0) == 0xE0) seq = 3;
+    else if ((c & 0xF8) == 0xF0) seq = 4;
+    else { dest[di++] = '?'; s++; continue; }     // invalid lead byte
+    bool ok = true;                               // require valid continuation bytes
+    for (int k = 1; k < seq; k++) {
+      if ((s[k] & 0xC0) != 0x80) { ok = false; break; }   // NUL also fails here
+    }
+    if (!ok) { dest[di++] = '?'; s++; continue; }
+    if (di + (size_t)seq + 1 > buf_sz) break;     // sequence won't fit
+    for (int k = 0; k < seq; k++) dest[di++] = (char)s[k];
+    s += seq;
+  }
+  dest[di] = 0;
+}
+
 bool StrHelper::isBlank(const char* str) {
   while (*str) {
     if (*str++ != ' ') return false;

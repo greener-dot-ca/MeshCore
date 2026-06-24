@@ -266,7 +266,12 @@ int MyMesh::getFromOfflineQueue(uint8_t frame[]) {
 // Classify a queued frame. Returns false if it is not a readable text message;
 // otherwise sets is_channel, id_pos (offset of pubkey-prefix / channel-idx) and
 // txt_type (for contact frames; channel frames are always plain).
-static bool parseMsgFrame(const uint8_t* buf, bool& is_channel, int& id_pos, uint8_t& txt_type) {
+// On success, body_pos = offset of the message text, with the whole header
+// validated to fit within `len` and leave at least one body byte. A frame whose
+// first byte merely collides with a message response code (truncated, foreign,
+// or non-text) is rejected rather than rendered as raw bytes.
+static bool parseMsgFrame(const uint8_t* buf, int len, bool& is_channel, int& id_pos,
+                          uint8_t& txt_type, int& body_pos) {
   bool v3;
   switch (buf[0]) {
     case RESP_CODE_CONTACT_MSG_RECV:    v3 = false; is_channel = false; break;
@@ -276,25 +281,37 @@ static bool parseMsgFrame(const uint8_t* buf, bool& is_channel, int& id_pos, uin
     default: return false;
   }
   id_pos = v3 ? 4 : 1;   // skip response code (+ SNR + 2 reserved for V3)
-  if (is_channel) { txt_type = TXT_TYPE_PLAIN; return true; }
-  txt_type = buf[id_pos + 6 + 1];   // after 6-byte pubkey prefix + path_len
-  return txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN;
+  if (is_channel) {
+    // layout: channel_idx, path_len, txt_type, timestamp(4), body
+    if (id_pos + 2 >= len) return false;
+    if (buf[id_pos + 2] != TXT_TYPE_PLAIN) return false;   // channel msgs are always PLAIN
+    txt_type = TXT_TYPE_PLAIN;
+    body_pos = id_pos + 1 + 1 + 1 + 4;
+  } else {
+    // layout: pubkey_prefix(6), path_len, txt_type, timestamp(4)[, extra(4)], body
+    if (id_pos + 7 >= len) return false;
+    txt_type = buf[id_pos + 6 + 1];
+    if (txt_type != TXT_TYPE_PLAIN && txt_type != TXT_TYPE_SIGNED_PLAIN) return false;
+    body_pos = id_pos + 6 + 1 + 1 + 4 + (txt_type == TXT_TYPE_SIGNED_PLAIN ? 4 : 0);
+  }
+  return body_pos < len;   // header must fit and leave >= 1 body byte
 }
 
 int MyMesh::getDisplayMsgCount() const {
   int n = 0;
-  bool is_channel; int id_pos; uint8_t txt_type;
+  bool is_channel; int id_pos, body_pos; uint8_t txt_type;
   for (int i = 0; i < offline_queue_len; i++) {
-    if (parseMsgFrame(offline_queue[i].buf, is_channel, id_pos, txt_type)) n++;
+    if (parseMsgFrame(offline_queue[i].buf, offline_queue[i].len, is_channel, id_pos, txt_type, body_pos)) n++;
   }
   return n;
 }
 
 bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
-  bool is_channel; int id_pos; uint8_t txt_type;
+  bool is_channel; int id_pos, body_pos; uint8_t txt_type;
   for (int i = offline_queue_len - 1; i >= 0; i--) {   // newest first
     const uint8_t* buf = offline_queue[i].buf;
-    if (!parseMsgFrame(buf, is_channel, id_pos, txt_type)) continue;
+    int len = offline_queue[i].len;
+    if (!parseMsgFrame(buf, len, is_channel, id_pos, txt_type, body_pos)) continue;
     if (display_idx-- > 0) continue;
 
     int p = id_pos;
@@ -309,7 +326,8 @@ bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
       out.hops = path_len & 63;
       out.path_len = path_len;
       ChannelDetails ch;
-      if (getChannel(channel_idx, ch)) StrHelper::strncpy(out.sender, ch.name, sizeof(out.sender));
+      if (getChannel(channel_idx, ch) && !StrHelper::isBlank(ch.name))
+        StrHelper::sanitizeText(out.sender, ch.name, sizeof(out.sender));
       else strcpy(out.sender, "Unknown");
     } else {
       const uint8_t* prefix = &buf[p]; p += 6;
@@ -321,15 +339,16 @@ bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
       out.hops = path_len & 63;
       out.path_len = path_len;
       ContactInfo* c = lookupContactByPubKey(prefix, 6);
-      if (c) StrHelper::strncpy(out.sender, c->name, sizeof(out.sender));
+      if (c && !StrHelper::isBlank(c->name))
+        StrHelper::sanitizeText(out.sender, c->name, sizeof(out.sender));
       else strcpy(out.sender, "?");
     }
 
-    int tlen = (int)offline_queue[i].len - p;
-    if (tlen < 0) tlen = 0;
+    int tlen = len - p;   // == len - body_pos; parseMsgFrame guarantees >= 1
     if (tlen > (int)sizeof(out.body) - 1) tlen = sizeof(out.body) - 1;
     memcpy(out.body, &buf[p], tlen);
     out.body[tlen] = 0;
+    StrHelper::sanitizeText(out.body, out.body, sizeof(out.body));   // strip non-text bytes
     return true;
   }
   return false;
@@ -562,6 +581,14 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
 
 bool MyMesh::allowPacketForward(const mesh::Packet* packet) {
   return _prefs.client_repeat != 0;
+}
+
+// Retune the radio to a new frequency (MHz) and persist it. Mirrors the apply
+// path of CMD_SET_RADIO_PARAMS (bw/sf/cr unchanged).
+void MyMesh::setRadioFreq(float mhz) {
+  _prefs.freq = mhz;
+  savePrefs();
+  radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
 }
 
 void MyMesh::sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis) {
