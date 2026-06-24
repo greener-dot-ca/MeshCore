@@ -60,19 +60,30 @@
 
 ////////////////////////////////////////////////////////////////////////////////
 // Builtin LEDs
-
-#define LED_RED                 (38)
-#define LED_GREEN               (36)
-#define LED_BLUE                (14)
-
-#define PIN_STATUS_LED          LED_GREEN
-#define LED_BUILTIN             LED_GREEN
+//
+// Verified on-device and against the Meshtastic ELECROW-ThinkNode-M1 variant.
+// The board has only TWO physical indicator LEDs (datasheet "Power" + "Status"),
+// both ACTIVE-HIGH -- not a 3-channel RGB. The previous RED/GREEN/BLUE map
+// (38/36/14) and active-low polarity here were all wrong (and pin 14 is not an
+// LED). Real mapping:
+//   pin 36 (P1.04): RED  "Power"  LED -- hardware-managed, blinks while charging;
+//                                        firmware leaves it alone
+//   pin 13 (P0.13): BLUE "Status" LED -- software-controlled; driven as the
+//                                        LoRa-TX activity light (P_LORA_TX_LED=13)
+//   pin 38 (P1.06): PIN_LED1 footprint -- not populated on this board
+//
+// The Adafruit Bluefruit core auto-drives LED_BLUE as its BLE-connection light,
+// so LED_BLUE points at the unpopulated PIN_LED1 (38): that keeps the conn-LED
+// off the real status LED, leaving pin 13 dedicated to the TX indicator.
+#define LED_POWER               (36)   // red "Power" LED (hardware/charge managed)
+#define LED_BLUE                (38)   // PIN_LED1 footprint (unpopulated); absorbs conn-LED
+#define LED_BUILTIN             LED_POWER
 #define PIN_LED                 LED_BUILTIN
 #define LED_PIN                 LED_BUILTIN
-#define LED_STATE_ON            LOW
-
-#define PIN_NEOPIXEL            (14)
-#define NEOPIXEL_NUM            (2)
+#define LED_STATE_ON            HIGH
+// NOTE: PIN_STATUS_LED is intentionally not defined -- the companion UITask
+// "status heartbeat" would otherwise blink the red power LED. The blue status
+// LED (pin 13) is driven solely as the LoRa-TX indicator via P_LORA_TX_LED.
 
 ////////////////////////////////////////////////////////////////////////////////
 // Builtin buttons

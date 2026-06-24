@@ -20,10 +20,9 @@ void initVariant() {
   pinMode(PIN_BUTTON1, INPUT_PULLUP);
   pinMode(PIN_BUTTON2, INPUT_PULLUP);
 
-  pinMode(LED_RED, OUTPUT);
-  pinMode(LED_GREEN, OUTPUT);
-  pinMode(LED_BLUE, OUTPUT);
-  digitalWrite(LED_BLUE, HIGH);
+  // LEDs: the blue "Status" LED (pin 13) is set up by ThinkNodeM1Board::begin()
+  // as the LoRa-TX indicator; the red "Power" LED (pin 36) is hardware-managed.
+  // Nothing to configure here.
 
   pinMode(PIN_TXCO, OUTPUT);
   digitalWrite(PIN_TXCO, HIGH);
