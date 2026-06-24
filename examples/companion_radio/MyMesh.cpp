@@ -217,6 +217,7 @@ bool MyMesh::Frame::isChannelMsg() const {
 }
 
 void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
+  uint32_t now = getRTCClock()->getCurrentTime();   // local "last heard" time
   if (offline_queue_len >= OFFLINE_QUEUE_SIZE) {
     MESH_DEBUG_PRINTLN("WARN: offline_queue is full!");
     int pos = 0;
@@ -228,6 +229,7 @@ void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
         MESH_DEBUG_PRINTLN("INFO: removed oldest channel message from queue.");
         offline_queue[offline_queue_len - 1].len = len;
         memcpy(offline_queue[offline_queue_len - 1].buf, frame, len);
+        offline_queue[offline_queue_len - 1].rx_time = now;
         return;
       }
       pos++;
@@ -236,6 +238,7 @@ void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
   } else {
     offline_queue[offline_queue_len].len = len;
     memcpy(offline_queue[offline_queue_len].buf, frame, len);
+    offline_queue[offline_queue_len].rx_time = now;
     offline_queue_len++;
   }
 }
@@ -296,6 +299,7 @@ bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
 
     int p = id_pos;
     out.is_channel = is_channel;
+    out.rx_timestamp = offline_queue[i].rx_time;   // local "last heard" time
     if (is_channel) {
       uint8_t channel_idx = buf[p++];
       uint8_t path_len = buf[p++];

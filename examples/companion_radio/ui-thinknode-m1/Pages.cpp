@@ -335,7 +335,8 @@ void MessagesScreen::rebuildConversations() {
       g = groups++;
       _key_chan[g] = v.is_channel;
       snprintf(_key_name[g], sizeof(_key_name[g]), "%s", v.sender);
-      relTime(_rows[g].time, sizeof(_rows[g].time), v.timestamp);   // first = newest = last
+      // last heard: local receive time (reliable), fall back to sender's clock
+      relTime(_rows[g].time, sizeof(_rows[g].time), v.rx_timestamp ? v.rx_timestamp : v.timestamp);
       counts[g] = 0;
     }
     counts[g]++;
@@ -367,7 +368,8 @@ void MessagesScreen::rebuildMessages() {
     matched++;
     if (n >= MSG_PAGE_MAX) continue;               // keep counting for the overflow label
     snprintf(_rows[n].line, sizeof(_rows[n].line), "%s", v.body);
-    relTime(_rows[n].time, sizeof(_rows[n].time), v.timestamp);
+    // last heard: local receive time (reliable), fall back to sender's clock
+    relTime(_rows[n].time, sizeof(_rows[n].time), v.rx_timestamp ? v.rx_timestamp : v.timestamp);
     _refs[n].scr = this; _refs[n].idx = i;         // absolute display index for openDetail
     _items[n] = makeMessageRow(_rows[n].line, &_refs[n], rowTime, rowActivate);
     n++;

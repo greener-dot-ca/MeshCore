@@ -114,6 +114,7 @@ public:
     uint8_t  hops;                 // flood path length (low 6 bits) when routed
     uint8_t  path_len;             // raw path byte: top 2 bits = hash size-1, low 6 = hop count
     uint32_t timestamp;            // sender's epoch timestamp (0 if unknown)
+    uint32_t rx_timestamp;         // device RTC epoch when received ("last heard"; 0 if clock was unset)
   };
   int  getOfflineQueueLen() const { return offline_queue_len; }
   int  getDisplayMsgCount() const;                    // # of readable text msgs queued
@@ -251,6 +252,7 @@ private:
   struct Frame {
     uint8_t len;
     uint8_t buf[MAX_FRAME_SIZE];
+    uint32_t rx_time;   // device RTC epoch when received (0 if clock unset); "last heard"
 
     bool isChannelMsg() const;
   };
