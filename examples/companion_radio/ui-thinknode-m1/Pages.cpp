@@ -193,6 +193,10 @@ static void rowActivate(const UIElement& e) {   // open the full-message read vi
   MessagesScreen::MsgRef* r = (MessagesScreen::MsgRef*)e.ctx;
   r->scr->openDetail(r->idx);
 }
+static void convActivate(const UIElement& e) {  // drill into a conversation
+  MessagesScreen::MsgRef* r = (MessagesScreen::MsgRef*)e.ctx;
+  r->scr->selectConversation(r->idx);
+}
 
 // Compact relative age of an epoch timestamp ("now"/"5m"/"3h"/"2d"), into `out`.
 // Empty when the timestamp or the device clock is unusable.
@@ -305,36 +309,100 @@ MessagesScreen::MessagesScreen(UITask* task, NodePrefs* prefs)
   _elems = _items; _count = 0;
 }
 
-// Rebuilt every render straight from the offline queue (the single source of
-// truth). _rows is a transient render cache, not a parallel message store.
+// Both levels are rebuilt every render straight from the offline queue (the
+// single source of truth); _rows/_key_* are a transient render cache, not a
+// parallel store. The queue holds up to OFFLINE_QUEUE_SIZE; grouping scans it all
+// so counts are accurate (cheap relative to the e-ink refresh cadence).
 void MessagesScreen::rebuild() {
+  switch (_level) {
+    case L_MSGS:  rebuildMessages(); break;
+    default:      rebuildConversations(); break;
+  }
+}
+
+// L_CONV: one row per (channel | DM contact) with a message count + last time.
+void MessagesScreen::rebuildConversations() {
   int total = the_mesh.getDisplayMsgCount();
-  int n = total > MSG_PAGE_MAX ? MSG_PAGE_MAX : total;
-  if (n <= 0) {
+  int groups = 0, counts[MSG_PAGE_MAX];
+  MyMesh::MsgView v;
+  for (int i = 0; i < total; i++) {               // i==0 is newest
+    if (!the_mesh.getDisplayMsg(i, v)) continue;
+    int g = -1;
+    for (int k = 0; k < groups; k++)
+      if (_key_chan[k] == v.is_channel && strcmp(_key_name[k], v.sender) == 0) { g = k; break; }
+    if (g < 0) {
+      if (groups >= MSG_PAGE_MAX) continue;        // out of row slots
+      g = groups++;
+      _key_chan[g] = v.is_channel;
+      snprintf(_key_name[g], sizeof(_key_name[g]), "%s", v.sender);
+      relTime(_rows[g].time, sizeof(_rows[g].time), v.timestamp);   // first = newest = last
+      counts[g] = 0;
+    }
+    counts[g]++;
+  }
+  if (groups == 0) {
     _items[0] = makeLabel("No messages", nullptr, nullptr);
     _elems = _items; _count = 1;
     return;
   }
+  for (int g = 0; g < groups; g++) {
+    const char* hash = (_key_chan[g] && _key_name[g][0] != '#') ? "#" : "";
+    snprintf(_rows[g].line, sizeof(_rows[g].line), "%s%s (%d)", hash, _key_name[g], counts[g]);
+    _refs[g].scr = this; _refs[g].idx = g;
+    _items[g] = makeMessageRow(_rows[g].line, &_refs[g], rowTime, convActivate);
+  }
+  _elems = _items; _count = groups;
+}
+
+// L_MSGS: every message in the selected conversation, newest first. Channel
+// bodies already carry the "Node: " sender prefix, so the row is just the body
+// ("Alice: hey all"); DM bodies are clean.
+void MessagesScreen::rebuildMessages() {
+  int total = the_mesh.getDisplayMsgCount();
+  int n = 0, matched = 0;
   MyMesh::MsgView v;
-  for (int i = 0; i < n; i++) {            // i==0 is newest
-    if (!the_mesh.getDisplayMsg(i, v)) { _rows[i].line[0] = _rows[i].time[0] = 0; }
-    else {
-      // one line: "Sender: body" ("#Channel: body" for channels), time on the right.
-      // Channel names are already stored with a leading '#', so only add one if absent.
-      const char* hash = (v.is_channel && v.sender[0] != '#') ? "#" : "";
-      snprintf(_rows[i].line, sizeof(_rows[i].line), "%s%s: %s", hash, v.sender, v.body);
-      relTime(_rows[i].time, sizeof(_rows[i].time), v.timestamp);
-    }
-    _refs[i].scr = this; _refs[i].idx = i;
-    _items[i] = makeMessageRow(_rows[i].line, &_refs[i], rowTime, rowActivate);
+  for (int i = 0; i < total; i++) {
+    if (!the_mesh.getDisplayMsg(i, v)) continue;
+    if (v.is_channel != _sel_is_channel || strcmp(v.sender, _sel_conv) != 0) continue;
+    matched++;
+    if (n >= MSG_PAGE_MAX) continue;               // keep counting for the overflow label
+    snprintf(_rows[n].line, sizeof(_rows[n].line), "%s", v.body);
+    relTime(_rows[n].time, sizeof(_rows[n].time), v.timestamp);
+    _refs[n].scr = this; _refs[n].idx = i;         // absolute display index for openDetail
+    _items[n] = makeMessageRow(_rows[n].line, &_refs[n], rowTime, rowActivate);
+    n++;
+  }
+  if (n == 0) {                                    // conversation emptied (synced)
+    _items[0] = makeLabel("No messages", nullptr, nullptr);
+    _elems = _items; _count = 1;
+    return;
   }
   int count = n;
-  if (total > n) {     // more buffered for the app than we list on-device
-    snprintf(_more, sizeof(_more), "+%d more on app", total - n);
+  if (matched > n) {
+    snprintf(_more, sizeof(_more), "+%d more on app", matched - n);
     _items[n] = makeLabel(_more, nullptr, nullptr);
     count = n + 1;
   }
   _elems = _items; _count = count;
+}
+
+void MessagesScreen::selectConversation(int row) {
+  if (row < 0 || row >= MSG_PAGE_MAX) return;
+  _sel_is_channel = _key_chan[row];
+  snprintf(_sel_conv, sizeof(_sel_conv), "%s", _key_name[row]);
+  _level = L_MSGS;
+  ElementScreen::resetFocus();                     // rebuild new level + focus first row
+}
+
+void MessagesScreen::goBack() {                    // message list -> conversation list
+  _level = L_CONV;
+  ElementScreen::resetFocus();
+}
+
+void MessagesScreen::resetFocus() {                // re-entering the page starts at the top
+  _level = L_CONV;
+  _sel_conv[0] = 0;
+  ElementScreen::resetFocus();
 }
 
 void MessagesScreen::openDetail(int display_idx) {
@@ -405,12 +473,11 @@ bool MessageDetailScreen::scrollDown() {
 int MessageDetailScreen::render(DisplayDriver& d) {
   d.setTextSize(1);
 
-  // header line 1: sender, or "#channel" for a channel message (direction/hops
-  // live in the list, not repeated here)
-  // For a channel message the sender's node name is embedded in the body as a
-  // "Name: " prefix (out.sender holds the *channel* name). Lift it onto the header
-  // line ("Name #channel") so the body stays clean -- which lets ASCII art render.
-  // Direct messages already have the node name in out.sender and a clean body.
+  // header line 1: breadcrumb. For a channel message the sender's node name is
+  // embedded in the body as a "Name: " prefix (out.sender holds the *channel*
+  // name); lift it onto the header as "#channel node" (channel first) so the body
+  // stays clean -- which lets ASCII art render. Direct messages already have the
+  // node name in out.sender and a clean body.
   const char* body = _msg.body;
   char hdr[56];
   if (_msg.is_channel) {
@@ -420,7 +487,7 @@ int MessageDetailScreen::render(DisplayDriver& d) {
       char who[28]; int n = (int)(sep - _msg.body);
       if (n > (int)sizeof(who) - 1) n = sizeof(who) - 1;
       memcpy(who, _msg.body, n); who[n] = 0;
-      snprintf(hdr, sizeof(hdr), "%s %s%s", who, chan[0] == '#' ? "" : "#", chan);
+      snprintf(hdr, sizeof(hdr), "%s%s %s", chan[0] == '#' ? "" : "#", chan, who);
       body = sep + 2;                                   // body after the "Name: " prefix
     } else {
       snprintf(hdr, sizeof(hdr), "%s%s", chan[0] == '#' ? "" : "#", chan);
@@ -493,25 +560,25 @@ int HelpScreen::render(DisplayDriver& d) {
   d.fillRect(0, 20, d.width(), 1);
 
   // ---- status-bar icon legend (the same Unifont glyphs the bar uses) ----
-  const char* icons[]  = { "\xF0\x9F\x93\xB1", "\xF0\x9F\x93\x8D", "\xF0\x9F\x94\x87", "\xE2\x9A\xA1" }; // 📱📍🔇⚡
-  const char* labels[] = { "App linked", "GPS on", "Sound muted", "Charging" };
+  const char* icons[]  = { "\xF0\x9F\x93\xB1", "\xF0\x9F\x93\xB5", "\xF0\x9F\x93\x8D", "\xF0\x9F\x94\x87", "\xE2\x9A\xA1" }; // 📱📵📍🔇⚡
+  const char* labels[] = { "App linked", "BLE off", "GPS on", "Muted", "Charging" };
   int y = 24;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 5; i++) {
     d.setCursor(2, y);  d.print(icons[i]);
     d.setCursor(22, y); d.print(labels[i]);
     y += 18;
   }
 
-  // ---- two-button navigation (▲ = top key, ● = back key) ----
-  y += 4;
-  d.setCursor(2, y);  d.print("\xE2\x96\xB2");                 // ▲
-  d.setCursor(22, y);      d.print("click: next");
-  d.setCursor(22, y + 18); d.print("hold: prev  2x: pick");
+  // ---- two buttons: ▲ moves/selects within a screen, ● navigates + always backs out ----
+  d.fillRect(0, y, d.width(), 1);                             // separator
+  y += 5;
+  d.setCursor(2, y);       d.print("\xE2\x96\xB2");           // ▲
+  d.setCursor(22, y);      d.print("click next  hold prev");
+  d.setCursor(22, y + 18); d.print("2x: select / open");
   y += 40;
-  d.setCursor(2, y);  d.print("\xE2\x97\x8F");                 // ●
-  d.setCursor(22, y);      d.print("click: page");
-  d.setCursor(22, y + 18); d.print("hold: back  2x: home");
-  d.setCursor(22, y + 36); d.print("3x: this help");
+  d.setCursor(2, y);       d.print("\xE2\x97\x8F");           // ●
+  d.setCursor(22, y);      d.print("click page  hold BACK");
+  d.setCursor(22, y + 18); d.print("2x home  3x help");
 
   return 3600000;   // static: only repaints on interaction (which dismisses it)
 }

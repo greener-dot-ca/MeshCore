@@ -10,7 +10,7 @@
 #include <helpers/sensors/LocationProvider.h>
 #ifdef DISPLAY_CLASS
   #ifdef USE_NATIVE_EINK_UI
-    #include "NativeEinkDisplay.h"   // native 200x200 renderer (ui-elements module)
+    #include "NativeEinkDisplay.h"   // native 200x200 renderer (ui-thinknode-m1 module)
   #else
     #include <helpers/ui/GxEPDDisplay.h>
   #endif
@@ -48,7 +48,7 @@ extern ThinkNodeM1SensorManager sensors;
 #ifdef DISPLAY_CLASS
   extern DISPLAY_CLASS display;
   extern MomentaryButton user_btn;
-  extern MomentaryButton back_btn;   // second button (PIN_BUTTON2 / GPIO 11), used by ui-elements
+  extern MomentaryButton back_btn;   // second button (PIN_BUTTON2 / GPIO 11), used by ui-thinknode-m1
 #endif
 
 bool radio_init();

@@ -327,7 +327,7 @@ void UITask::loop() {
     // ---- read view ----
     //   triangle  click       = page down body, then on to the next (older) message
     //   triangle  hold        = previous (newer) message  (CLI rescue in first 8s)
-    //   circle    hold        = back to Messages list (a click won't exit)
+    //   circle    hold        = back to the message list (keeps the drill context)
     //   circle    double      = Home
     if (ev == BUTTON_EVENT_LONG_PRESS && millis() - ui_started_at < 8000) {
       the_mesh.enterCLIRescue();
@@ -341,7 +341,9 @@ void UITask::loop() {
     } else if (ev2 == BUTTON_EVENT_TRIPLE_CLICK) {
       if (!wakeIfOff()) showHelp();
     } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
-      if (!wakeIfOff()) { curr_page = PAGE_MESSAGES; _messages->resetFocus(); setCurrScreen(_messages); }
+      // return to the message list WITHOUT resetFocus so the drill context
+      // (selected conversation/node) is preserved
+      if (!wakeIfOff()) { curr_page = PAGE_MESSAGES; setCurrScreen(_messages); }
     }
   } else {
     // ---- triangle button (user_btn / GPIO42): ELEMENT navigation ----
@@ -362,12 +364,15 @@ void UITask::loop() {
 
     // ---- circle button (back_btn / GPIO39): PAGE navigation ----
     //   click        = next page
-    //   long press   = previous page (back)
+    //   long press   = previous page (back), or pop up one Messages drill level
     //   double-click = go to home page
     if (ev2 == BUTTON_EVENT_CLICK) {
       if (!wakeIfOff() && onPage()) nextPage();
     } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
-      if (!wakeIfOff() && onPage()) prevPage();
+      if (!wakeIfOff() && onPage()) {
+        if (curr == _messages && !_messages->atTopLevel()) _messages->goBack();
+        else prevPage();
+      }
     } else if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
       if (!wakeIfOff() && onPage()) gotoHomeScreen();
     } else if (ev2 == BUTTON_EVENT_TRIPLE_CLICK) {

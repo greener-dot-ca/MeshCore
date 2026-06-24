@@ -7,7 +7,7 @@ rows tall; width is 8 (16 bytes) or 16 (32 bytes), taken straight from the .hex.
 
 Usage:
   python3 tools/gen_unifont.py unifont.hex unifont_upper.hex \
-      examples/companion_radio/ui-elements/unifont_glyphs.h
+      examples/companion_radio/ui-thinknode-m1/unifont_glyphs.h
 """
 import sys
 

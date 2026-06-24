@@ -12,7 +12,7 @@
 // Native 200x200 renderer for the ThinkNode M1 e-ink: draws 1:1 in physical pixels
 // (no logical-128 upscaler, so chrome is crisp) and uses a packed GNU Unifont subset
 // for text (real Unicode/symbol glyphs instead of the `block` fallback). Lives in the
-// ui-elements module so upstream src/ stays untouched -- swapped in via the build flag
+// ui-thinknode-m1 module so upstream src/ stays untouched -- swapped in via the build flag
 // DISPLAY_CLASS=NativeEinkDisplay + USE_NATIVE_EINK_UI (see variant target.h).
 class NativeEinkDisplay : public DisplayDriver {
   GxEPD2_BW<GxEPD2_150_BN, 200> display;

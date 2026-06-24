@@ -92,19 +92,34 @@ public:
   #define MSG_PAGE_MAX 32   // newest-N listed on-device; the queue itself holds more
 #endif
 
-// Live view of the offline (unread-by-app) queue: rebuilds from MyMesh every
-// render, so it mirrors the queue automatically (messages vanish when the app
-// syncs them). Activating a row opens the full-message read view; there is no
-// manual dismiss. The per-row strings are a render cache, not a second store.
+// Live, drill-down view over the offline (unread-by-app) queue, rebuilt from
+// MyMesh every render so it mirrors the queue (messages vanish when the app
+// syncs them). Two levels:
+//   L_CONV  - conversations: each channel + each DM contact, with msg count + last
+//   L_MSGS  - every message in the selected conversation (newest first; channel
+//             rows are node-prefixed "Node: body"); activate -> read view
+// The per-row strings are a render cache, not a second store.
 class MessagesScreen : public ElementScreen {
 public:
   struct MsgRef { MessagesScreen* scr; int idx; };   // bound to each row via ctx
+  enum Level : uint8_t { L_CONV, L_MSGS };
 private:
-  struct Row { char line[80]; char time[8]; };  // "(D) Sender: body" + relative time
+  struct Row { char line[80]; char time[8]; };  // row text + relative time
   UIElement _items[MSG_PAGE_MAX + 1];   // +1 for empty-state / overflow label
   MsgRef    _refs[MSG_PAGE_MAX];
   Row       _rows[MSG_PAGE_MAX];
   char      _more[24];                  // "+N more on app" overflow label
+
+  Level _level = L_CONV;
+  bool  _sel_is_channel = false;        // type of the selected conversation
+  char  _sel_conv[32] = {0};            // selected channel or contact name
+  // At L_CONV, _refs[i].idx indexes these per-row keys; at L_MSGS, _refs[i].idx
+  // is the absolute display index for getDisplayMsg/openDetail.
+  char  _key_name[MSG_PAGE_MAX][32];
+  bool  _key_chan[MSG_PAGE_MAX];
+
+  void rebuildConversations();
+  void rebuildMessages();
 protected:
   void rebuild() override;
   int pageIndex() const override { return PAGE_MESSAGES; }
@@ -113,6 +128,10 @@ public:
   MessagesScreen(UITask* task, NodePrefs* prefs);
   const char* timeAt(int i) const { return _rows[i].time; }   // right-aligned relative time
   void openDetail(int display_idx);     // activate a row -> read view
+  void selectConversation(int row);     // L_CONV row activate -> messages
+  bool atTopLevel() const { return _level == L_CONV; }
+  void goBack();                        // pop up to the conversation list
+  void resetFocus() override;           // re-entering the page starts at L_CONV
 };
 
 // Full-screen word-wrapped read view for a single message (not an ElementScreen).

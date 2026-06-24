@@ -195,8 +195,9 @@ void ElementScreen::drawStatusBar(DisplayDriver& d) {
   d.drawTextRightAlign(d.width(), ty, clk);
   int x = drawBattery(d, d.width() - cw - 4);   // returns left edge of battery (or bolt)
 
-  // status icons (app / GPS / muted) as Unifont symbols, right-justified before battery
-  const char* icons[3]; DisplayDriver::Color col[3]; int ni = 0;
+  // status icons (BLE-off / app / GPS / muted) as Unifont symbols, right-justified before battery
+  const char* icons[4]; DisplayDriver::Color col[4]; int ni = 0;
+  if (!_task->isSerialEnabled()) { icons[ni] = "\xF0\x9F\x93\xB5"; col[ni] = DisplayDriver::RED; ni++; } // 📵 BLE off
   if (_task->hasConnection()) { icons[ni] = "\xF0\x9F\x93\xB1"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📱
   if (_task->getGPSState())   { icons[ni] = "\xF0\x9F\x93\x8D"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📍
 #ifdef PIN_BUZZER

@@ -68,7 +68,7 @@ public:
   int  render(DisplayDriver& display) override;
   bool handleInput(char c) override;
 
-  void resetFocus();        // called when this page becomes current
+  virtual void resetFocus();        // called when this page becomes current
   void focusNext();         // advance focus to next selectable (wraps)
   void focusPrev();         // move focus to previous selectable (wraps)
   void activateFocused();   // activate the focused element
