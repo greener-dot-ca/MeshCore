@@ -66,13 +66,17 @@ selection moves item-to-item and the view follows it.
 1. **Home** — node name, then `Buzzer` / `Bluetooth` / `GPS` toggles, then `App`
    (connected?), `Unread` count, `Uptime`.
 2. **Messages** — the unread messages (see below).
-3. **Mesh** — `Send Advert` action, then stats: `Contacts`, `Sent F/D`,
-   `Recv F/D`, `Airtime`, `Noise`, `RSSI`, `SNR`, `Queue`.
-4. **GPS** — `GPS` toggle, then `Fix` (live?), `Last` (age of last good fix),
+3. **Mesh** — `Send Advert` action, then traffic stats: `Contacts`, `Sent F/D`,
+   `Recv F/D`, `Airtime`, `Queue`.
+4. **Radio** — RF config + link. The `Off-grid` (client-repeat) toggle and the
+   `Off grid freq` preset (`433`/`869`/`918` MHz) are the editable controls; then
+   the tuned LoRa params `Freq` (MHz), `BW` (kHz), `SF`, `CR`, `TX` (read-only,
+   set via the app), and live readings `Noise`, `RSSI`, `SNR`.
+5. **GPS** — `GPS` toggle, then `Fix` (live?), `Last` (age of last good fix),
    `Sats`, `Pos` (lat,lon), `Alt`. Position/sats/alt show the *last good fix* so
    the page stays useful after losing signal or switching GPS off.
-5. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
-6. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
+6. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
+7. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
 
 A boot **Splash** screen (logo + version + build date) shows for ~3 s first.
 
@@ -145,7 +149,7 @@ body).
 |----------------------------|----------------|
 | `UIElements.{h,cpp}`       | `UIElement` struct, `ElemKind`, the `make*` factories, per-element draw. |
 | `ElementScreen.{h,cpp}`    | Scrollable element-list base: status bar, page-dots, scrollbar, focus/scroll logic, input routing. |
-| `Pages.{h,cpp}`            | Concrete screens (Splash, Home, Messages drill-down, Mesh, GPS, Bluetooth, Time, Power) and their element getters/callbacks. |
+| `Pages.{h,cpp}`            | Concrete screens (Splash, Home, Messages drill-down, Mesh, Radio, GPS, Bluetooth, Time, Power) and their element getters/callbacks. |
 | `UITask.{h,cpp}`           | `AbstractUITask` implementation: owns the pages, button dispatch, refresh timing, LED/buzzer, message intake, shutdown. |
 | `NativeEinkDisplay.{h,cpp}`| `DisplayDriver` that draws the GxEPD2 panel 1:1 at 200×200 (no scale), with a CRC dirty-check so a static frame costs no panel refresh, plus a UTF-8-aware Unifont blitter. |
 | `unifont_glyphs.h`         | Generated packed GNU Unifont subset (sorted codepoint index + 1-bit glyph blob); see `tools/gen_unifont.py`. |

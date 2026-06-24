@@ -190,6 +190,24 @@ static int  freqGet(const UIElement& e)  { return T(e)->getFreqPreset(); }
 static void freqNext(const UIElement& e) { T(e)->cycleFreqPreset(); }
 static void hibernateCb(const UIElement& e) { ((ShutdownScreen*)e.ctx)->initShutdown(); }
 
+// ----- Radio settings getters (read-only; the actual tuned LoRa params, set via
+// the app -- the on-device controls are the Off-grid toggle + freq preset above) -----
+static const char* freqText(const UIElement&) {   // tuned centre frequency, MHz
+  static char b[12]; sprintf(b, "%.3f", the_mesh.getNodePrefs()->freq); return b;
+}
+static const char* bwText(const UIElement&) {      // bandwidth, kHz
+  static char b[12]; sprintf(b, "%.0f", the_mesh.getNodePrefs()->bw); return b;
+}
+static const char* sfText(const UIElement&) {      // spreading factor
+  static char b[6]; sprintf(b, "%d", the_mesh.getNodePrefs()->sf); return b;
+}
+static const char* crText(const UIElement&) {      // coding rate (4/N)
+  static char b[6]; sprintf(b, "%d", the_mesh.getNodePrefs()->cr); return b;
+}
+static const char* txText(const UIElement&) {      // transmit power
+  static char b[10]; sprintf(b, "%ddBm", the_mesh.getNodePrefs()->tx_power_dbm); return b;
+}
+
 // ----- message element callbacks -----
 static const char* rowTime(const UIElement& e) {   // right-aligned relative time
   MessagesScreen::MsgRef* r = (MessagesScreen::MsgRef*)e.ctx;
@@ -261,19 +279,33 @@ HomeScreen::HomeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, pre
 }
 
 // ============================================================ MeshScreen
+// Mesh-protocol traffic only; RF config + link readings moved to the Radio page.
 MeshScreen::MeshScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Mesh") {
   _items[0]  = makeAction("Send Advert", task, advertCb);
-  _items[1]  = makeToggle("Off-grid", task, offGridGet, offGridToggle);   // client-repeat / relay
-  _items[2]  = makeCycle("Off grid freq", task, freqOpts, 3, freqGet, freqNext);   // 433/869/918 MHz preset
-  _items[3]  = makeLabel("Contacts", contactsText, task);
-  _items[4]  = makeLabel("Sent F/D", sentText,     task);
-  _items[5]  = makeLabel("Recv F/D", recvText,     task);
-  _items[6]  = makeLabel("Airtime",  airtimeText,  task);
-  _items[7]  = makeLabel("Noise",    noiseText,    task);
-  _items[8]  = makeLabel("RSSI",     rssiText,     task);
-  _items[9]  = makeLabel("SNR",      snrText,      task);
-  _items[10] = makeLabel("Queue",    queueText,    task);
-  _elems = _items; _count = 11;
+  _items[1]  = makeLabel("Contacts", contactsText, task);
+  _items[2]  = makeLabel("Sent F/D", sentText,     task);
+  _items[3]  = makeLabel("Recv F/D", recvText,     task);
+  _items[4]  = makeLabel("Airtime",  airtimeText,  task);
+  _items[5]  = makeLabel("Queue",    queueText,    task);
+  _elems = _items; _count = 6;
+}
+
+// ============================================================ RadioScreen
+// RF config + link readings. The Off-grid client-repeat toggle and the 433/869/918
+// MHz preset (moved off the Mesh page) are the only editable controls; the LoRa
+// params below are read-only mirrors of the app-side config.
+RadioScreen::RadioScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Radio") {
+  _items[0] = makeToggle("Off-grid", task, offGridGet, offGridToggle);   // client-repeat / relay
+  _items[1] = makeCycle("Off grid freq", task, freqOpts, 3, freqGet, freqNext);  // 433/869/918 MHz preset
+  _items[2] = makeLabel("Freq", freqText, task);
+  _items[3] = makeLabel("BW",   bwText,   task);
+  _items[4] = makeLabel("SF",   sfText,   task);
+  _items[5] = makeLabel("CR",   crText,   task);
+  _items[6] = makeLabel("TX",   txText,   task);
+  _items[7] = makeLabel("Noise", noiseText, task);
+  _items[8] = makeLabel("RSSI",  rssiText,  task);
+  _items[9] = makeLabel("SNR",   snrText,   task);
+  _elems = _items; _count = 10;
 }
 
 // ============================================================ GPSScreen

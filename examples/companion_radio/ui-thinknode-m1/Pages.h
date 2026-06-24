@@ -11,6 +11,7 @@ enum {
   PAGE_HOME = 0,
   PAGE_MESSAGES,
   PAGE_MESH,
+  PAGE_RADIO,
   PAGE_GPS,
   PAGE_BLUETOOTH,
   PAGE_BUZZ,
@@ -40,12 +41,25 @@ public:
 };
 
 class MeshScreen : public ElementScreen {
-  UIElement _items[11];
+  UIElement _items[6];
 protected:
   int pageIndex() const override { return PAGE_MESH; }
   int pageCount() const override { return PAGE_COUNT; }
 public:
   MeshScreen(UITask* task, NodePrefs* prefs);
+};
+
+// Radio page: RF config + reception. The "Off-grid" client-repeat toggle and the
+// 433/869/918 MHz preset selector live here (moved off the Mesh page), alongside
+// the current LoRa parameters (freq/BW/SF/CR/TX, read-only -- set via the app) and
+// the live link readings (noise floor, last-packet RSSI/SNR).
+class RadioScreen : public ElementScreen {
+  UIElement _items[10];
+protected:
+  int pageIndex() const override { return PAGE_RADIO; }
+  int pageCount() const override { return PAGE_COUNT; }
+public:
+  RadioScreen(UITask* task, NodePrefs* prefs);
 };
 
 class GPSScreen : public ElementScreen {
