@@ -173,6 +173,14 @@ int UITask::getFreqPreset() const {
 
 void UITask::cycleFreqPreset() {
   if (!_node_prefs) return;
+  // The preset only governs the off-grid (client-repeat) band -- don't retune the
+  // live radio unless off-grid is on, so browsing this control on a normal node
+  // can't knock it off its configured frequency.
+  if (!getOffGrid()) {
+    showAlert("Enable Off-grid first", 1000);
+    _next_refresh = 0;
+    return;
+  }
   int idx = (getFreqPreset() + 1) % FREQ_PRESET_COUNT;
   the_mesh.setRadioFreq(FREQ_PRESETS[idx]);   // retune + persist
   notify(UIEventType::ack);
