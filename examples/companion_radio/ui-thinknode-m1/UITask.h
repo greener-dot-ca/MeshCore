@@ -36,6 +36,8 @@ class UITask : public AbstractUITask {
 #endif
   unsigned long _next_refresh, _auto_off;
   NodePrefs* _node_prefs;
+  int   _offgrid_preset;   // remembered off-grid (client-repeat) band: index into FREQ_PRESETS
+  float _saved_freq;       // freq before off-grid was enabled, restored on disable (0 = none)
   char _alert[80];
   unsigned long _alert_expiry;
   int _msgcount;
@@ -79,6 +81,8 @@ public:
       : AbstractUITask(board, serial), _display(NULL), _sensors(NULL) {
     next_batt_chck = _next_refresh = 0;
     ui_started_at = 0;
+    _offgrid_preset = 0;
+    _saved_freq = 0;
     curr = NULL;
     curr_page = 0;
     _msgcount = 0;

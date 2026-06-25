@@ -193,10 +193,10 @@ static void hibernateCb(const UIElement& e) { ((ShutdownScreen*)e.ctx)->initShut
 // ----- Radio settings getters (read-only; the actual tuned LoRa params, set via
 // the app -- the on-device controls are the Off-grid toggle + freq preset above) -----
 static const char* freqText(const UIElement&) {   // tuned centre frequency, MHz
-  static char b[12]; sprintf(b, "%.3f", the_mesh.getNodePrefs()->freq); return b;
+  static char b[12]; sprintf(b, "%g", the_mesh.getNodePrefs()->freq); return b;
 }
 static const char* bwText(const UIElement&) {      // bandwidth, kHz
-  static char b[12]; sprintf(b, "%.0f", the_mesh.getNodePrefs()->bw); return b;
+  static char b[12]; sprintf(b, "%g", the_mesh.getNodePrefs()->bw); return b;
 }
 static const char* sfText(const UIElement&) {      // spreading factor
   static char b[6]; sprintf(b, "%d", the_mesh.getNodePrefs()->sf); return b;

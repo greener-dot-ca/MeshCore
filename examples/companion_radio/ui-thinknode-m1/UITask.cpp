@@ -13,6 +13,7 @@
 #define LED_CYCLE_MILLIS  4000
 #endif
 
+static int presetIndexForFreq(float mhz);   // defined below, near the off-grid helpers
 
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display = display;
@@ -25,6 +26,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   back_btn.begin();   // second button (PIN_BUTTON2)
 
   _node_prefs = node_prefs;
+  // Seed the remembered off-grid band from the live freq (recovers the choice
+  // across reboot while off-grid is on; defaults to the first preset otherwise).
+  _offgrid_preset = presetIndexForFreq(_node_prefs->freq);
 
   if (_display != NULL) {
     _display->turnOn();
@@ -141,51 +145,63 @@ void UITask::forceFullRefresh() {
   }
 }
 
+// Frequency presets (MHz). These match the client-repeat allowed bands
+// (repeat_freq_ranges in MyMesh), so off-grid repeat stays valid on each.
+static const float FREQ_PRESETS[] = { 433.0f, 869.495f, 918.0f };
+static const int   FREQ_PRESET_COUNT = sizeof(FREQ_PRESETS) / sizeof(FREQ_PRESETS[0]);
+
+// index of the preset matching `mhz` (within 0.05 MHz), else 0
+static int presetIndexForFreq(float mhz) {
+  for (int i = 0; i < FREQ_PRESET_COUNT; i++) {
+    float d = mhz - FREQ_PRESETS[i];
+    if (d > -0.05f && d < 0.05f) return i;
+  }
+  return 0;
+}
+
 // "Off-grid" mode = client-repeat: this companion node also forwards/relays mesh
-// traffic (MyMesh::allowPacketForward), so every node helps carry the mesh. Only
-// flips the flag + persists -- it does NOT touch radio params (freq/sf/bw).
+// traffic (MyMesh::allowPacketForward), so every node helps carry the mesh.
+// Enabling it parks the radio on the selected off-grid preset band (remembering
+// the prior freq); disabling it restores that prior freq.
 bool UITask::getOffGrid() const {
   return _node_prefs && _node_prefs->client_repeat;
 }
 
 void UITask::toggleOffGrid() {
   if (!_node_prefs) return;
-  _node_prefs->client_repeat = _node_prefs->client_repeat ? 0 : 1;
-  the_mesh.savePrefs();
+  bool turning_on = !_node_prefs->client_repeat;
+  _node_prefs->client_repeat = turning_on ? 1 : 0;
+  if (turning_on) {
+    // remember the current (normal) freq, then move to the chosen off-grid band
+    _saved_freq = _node_prefs->freq;
+    the_mesh.setRadioFreq(FREQ_PRESETS[_offgrid_preset]);   // retune + persist (also persists client_repeat)
+  } else if (_saved_freq > 0) {
+    the_mesh.setRadioFreq(_saved_freq);   // restore the pre-off-grid freq + persist
+  } else {
+    the_mesh.savePrefs();                 // nothing to restore; just persist the flag
+  }
   notify(UIEventType::ack);
   showAlert(_node_prefs->client_repeat ? "Off-grid: ON" : "Off-grid: OFF", 800);
   _next_refresh = 0;
 }
 
-// Frequency presets (MHz). These match the client-repeat allowed bands
-// (repeat_freq_ranges in MyMesh), so off-grid repeat stays valid on each.
-static const float FREQ_PRESETS[] = { 433.0f, 869.495f, 918.0f };
-static const int   FREQ_PRESET_COUNT = sizeof(FREQ_PRESETS) / sizeof(FREQ_PRESETS[0]);
-
+// The off-grid band is a remembered setting, independent of the live freq, so it
+// survives toggling off-grid off (when the radio is on its normal frequency).
 int UITask::getFreqPreset() const {
-  if (!_node_prefs) return 0;
-  for (int i = 0; i < FREQ_PRESET_COUNT; i++) {
-    float d = _node_prefs->freq - FREQ_PRESETS[i];
-    if (d > -0.05f && d < 0.05f) return i;
-  }
-  return 0;   // current freq isn't a preset; show the first
+  return _offgrid_preset;
 }
 
 void UITask::cycleFreqPreset() {
   if (!_node_prefs) return;
-  // The preset only governs the off-grid (client-repeat) band -- don't retune the
-  // live radio unless off-grid is on, so browsing this control on a normal node
-  // can't knock it off its configured frequency.
-  if (!getOffGrid()) {
-    showAlert("Enable Off-grid first", 1000);
-    _next_refresh = 0;
-    return;
+  _offgrid_preset = (_offgrid_preset + 1) % FREQ_PRESET_COUNT;   // remembered regardless of mode
+  // Only retune the live radio when off-grid is on; otherwise just remember the
+  // choice so a normal node can't be knocked off its configured frequency.
+  if (getOffGrid()) {
+    the_mesh.setRadioFreq(FREQ_PRESETS[_offgrid_preset]);   // retune + persist
+    notify(UIEventType::ack);
   }
-  int idx = (getFreqPreset() + 1) % FREQ_PRESET_COUNT;
-  the_mesh.setRadioFreq(FREQ_PRESETS[idx]);   // retune + persist
-  notify(UIEventType::ack);
-  char msg[24];
-  snprintf(msg, sizeof(msg), "Freq: %.3f MHz", FREQ_PRESETS[idx]);
+  char msg[28];
+  snprintf(msg, sizeof(msg), "Off-grid: %.3f MHz", FREQ_PRESETS[_offgrid_preset]);
   showAlert(msg, 1000);
   _next_refresh = 0;
 }
