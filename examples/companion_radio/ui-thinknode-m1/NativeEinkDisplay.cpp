@@ -109,20 +109,19 @@ void NativeEinkDisplay::startFrame(Color bkg) {
 
 // ---- draw ops --------------------------------------------------------------------
 
+// State setters don't touch the change-detect CRC: every draw op below folds in the
+// full state it consumes (cursor/color/scale), so hashing here would only add false
+// positives (extra refreshes), never catch a real change the draw op would miss.
 void NativeEinkDisplay::setTextSize(int sz) {
   _scale = (sz >= 2) ? 2 : 1;
-  display_crc.update<int>(_scale);
 }
 
 void NativeEinkDisplay::setColor(Color c) {    // DARK = background (white); others = ink (black)
   _curr_color = (c == DARK) ? GxEPD_WHITE : GxEPD_BLACK;
-  display_crc.update<uint16_t>(_curr_color);
 }
 
 void NativeEinkDisplay::setCursor(int x, int y) {
   _cx = x; _cy = y;
-  display_crc.update<int>(x);
-  display_crc.update<int>(y);
 }
 
 void NativeEinkDisplay::print(const char* str) {

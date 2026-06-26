@@ -7,6 +7,22 @@
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #endif
 
+// While the display is off, re-draw once this often to keep content current and
+// (in Full mode) re-drive every pixel to fight UV fade/ghosting. Between ticks the
+// e-ink holds its last image with no driving -- far less UV exposure than the live
+// per-second repaint used while awake.
+#ifndef EINK_IDLE_REFRESH_MILLIS
+  #define EINK_IDLE_REFRESH_MILLIS  60000   // 1 minute
+#endif
+
+// Red "Power" LED battery heartbeat: brief blink every PERIOD while on battery.
+#ifndef RED_LED_PERIOD_MILLIS
+  #define RED_LED_PERIOD_MILLIS  5000
+#endif
+#ifndef RED_LED_ON_MILLIS
+  #define RED_LED_ON_MILLIS  60
+#endif
+
 #ifdef PIN_STATUS_LED
 #define LED_ON_MILLIS     20
 #define LED_ON_MSG_MILLIS 200
@@ -50,14 +66,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   splash = new SplashScreen(this);
   _messages = new MessagesScreen(this, node_prefs);
   _detail = new MessageDetailScreen(this);
+  _advert_detail = new AdvertDetailScreen(this);
   _help = new HelpScreen();
   pages[PAGE_HOME]      = new HomeScreen(this, node_prefs);
   pages[PAGE_MESH]      = new MeshScreen(this, node_prefs);
+  pages[PAGE_ADVERTS]   = new AdvertsScreen(this, node_prefs);
   pages[PAGE_RADIO]     = new RadioScreen(this, node_prefs);
   pages[PAGE_GPS]       = new GPSScreen(this, node_prefs);
   pages[PAGE_BLUETOOTH] = new BluetoothScreen(this, node_prefs);
   pages[PAGE_BUZZ]      = new BuzzScreen(this, node_prefs);
   pages[PAGE_TIME]      = new TimeScreen(this, node_prefs);
+  pages[PAGE_SCREEN]    = new ScreenSettingsScreen(this, node_prefs);
   pages[PAGE_MESSAGES]  = _messages;
   pages[PAGE_SHUTDOWN]  = new ShutdownScreen(this, node_prefs);
 
@@ -299,6 +318,18 @@ void UITask::setUtcOffsetMin(int16_t m) {
   the_mesh.savePrefs();
 }
 
+void UITask::setIdleRefresh(uint8_t m) {
+  if (!_node_prefs) return;
+  _node_prefs->eink_idle_refresh = m & 1;
+  the_mesh.savePrefs();
+}
+
+void UITask::showAdvertDetail(const AdvertPath& a) {
+  if (!_advert_detail) return;
+  _advert_detail->setAdvert(a);
+  setCurrScreen(_advert_detail);
+}
+
 void UITask::formatClock(char* out, size_t n) const {
   uiFormatClock(_node_prefs, currentEpoch(), out, n);
 }
@@ -353,6 +384,37 @@ void UITask::userLedHandler() {
     digitalWrite(PIN_STATUS_LED, led_state == LED_STATE_ON);
   }
 #endif
+
+#if defined(LED_POWER)
+  // Red "Power" LED heartbeat: a brief blink every RED_LED_PERIOD while running on
+  // battery. When externally powered the charger hardware owns the LED, so release the
+  // pin (INPUT) and leave it alone.
+  unsigned long now = millis();
+  if (board.isExternalPowered()) {
+    if (_red_led_out) {                         // hand the pin back to the charger
+      pinMode(LED_POWER, INPUT);
+      _red_led_out = false;
+      _red_led_lit = false;
+    }
+  } else {
+    if (!_red_led_out) {                        // take the pin for the heartbeat
+      pinMode(LED_POWER, OUTPUT);
+      digitalWrite(LED_POWER, !LED_STATE_ON);
+      _red_led_out = true;
+      _red_led_lit = false;
+      _red_led_at = now + RED_LED_PERIOD_MILLIS;
+    }
+    if (!_red_led_lit && now >= _red_led_at) {          // start a blink
+      _red_led_lit = true;
+      digitalWrite(LED_POWER, LED_STATE_ON);
+      _red_led_at = now + RED_LED_ON_MILLIS;
+    } else if (_red_led_lit && now >= _red_led_at) {    // end the blink
+      _red_led_lit = false;
+      digitalWrite(LED_POWER, !LED_STATE_ON);
+      _red_led_at = now + RED_LED_PERIOD_MILLIS - RED_LED_ON_MILLIS;
+    }
+  }
+#endif
 }
 
 void UITask::shutdown(bool restart) {
@@ -396,6 +458,15 @@ void UITask::loop() {
         curr_page = _help_return_page;
         setCurrScreen(_help_return ? _help_return : (UIScreen*)pages[PAGE_HOME]);
       }
+    }
+  } else if (curr == _advert_detail) {
+    // ---- advert detail ---- circle hold = back to the list; double = Home; triple = help
+    if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
+      if (!wakeIfOff()) gotoHomeScreen();
+    } else if (ev2 == BUTTON_EVENT_TRIPLE_CLICK) {
+      if (!wakeIfOff()) showHelp();
+    } else if (ev2 == BUTTON_EVENT_LONG_PRESS || ev != BUTTON_EVENT_NONE) {
+      if (!wakeIfOff()) { curr_page = PAGE_ADVERTS; setCurrScreen(pages[PAGE_ADVERTS]); }
     }
   } else if (curr == _detail) {
     // ---- read view ----
@@ -483,13 +554,21 @@ void UITask::loop() {
       _auto_off = millis() + AUTO_OFF_MILLIS;
     }
 #endif
-    // Sleep is backlight-only: e-ink retains its image after turnOff(), so we
-    // kill just the frontlight here and keep refreshing the content below on the
-    // timer (so uptime / message ages stay current while asleep).
+    // Sleep is backlight-only: e-ink retains its image after turnOff(). Instead of
+    // repainting every second while asleep (which drives the panel continuously and
+    // accelerates UV fade), we kill the frontlight, repaint once to drop the selection
+    // bar, then leave the image static and only re-draw once a minute below.
     bool asleep = millis() > _auto_off;
     if (asleep && _display->isOn()) {
       _display->turnOff();
+      _idle_refresh_at = millis() + EINK_IDLE_REFRESH_MILLIS;
       _next_refresh = 0;   // repaint now so the selection bar disappears immediately
+    }
+    // periodic idle re-draw: keeps ages current and (Full mode) re-drives every pixel
+    if (asleep && _idle_refresh_at != 0 && millis() > _idle_refresh_at) {
+      if (getIdleRefresh() == 0) _display->fullRefresh();   // 0 = full, 1 = partial
+      _idle_refresh_at = millis() + EINK_IDLE_REFRESH_MILLIS;
+      _next_refresh = 0;   // force the render below
     }
 #else
     const bool asleep = false;
@@ -498,7 +577,7 @@ void UITask::loop() {
     if (millis() >= _next_refresh && curr) {
       // hide the selection bar while asleep (visual "screen off" hint); it
       // returns on the next render once awake.
-      ElementScreen* page = (onPage() && curr != _detail && curr != _help) ? (ElementScreen*)curr : NULL;
+      ElementScreen* page = (onPage() && curr != _detail && curr != _advert_detail && curr != _help) ? (ElementScreen*)curr : NULL;
       if (page) page->setFocusVisible(!asleep);
 
       _display->startFrame();
@@ -513,6 +592,8 @@ void UITask::loop() {
         _display->drawRect(p, y, _display->width() - p * 2, y);
         _display->drawTextCentered(_display->width() / 2, y + p * 3, _alert);
         _next_refresh = _alert_expiry;
+      } else if (asleep) {
+        _next_refresh = _idle_refresh_at;   // stay dark until the next minute re-draw
       } else {
         _next_refresh = millis() + delay_millis;
       }

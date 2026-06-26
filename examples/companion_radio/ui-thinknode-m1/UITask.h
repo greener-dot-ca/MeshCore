@@ -35,6 +35,7 @@ class UITask : public AbstractUITask {
   GenericVibration vibration;
 #endif
   unsigned long _next_refresh, _auto_off;
+  unsigned long _idle_refresh_at = 0;   // next idle re-draw while the screen is off (0 = none scheduled)
   NodePrefs* _node_prefs;
   int   _offgrid_preset;   // remembered off-grid (client-repeat) band: index into FREQ_PRESETS
   float _saved_freq;       // freq before off-grid was enabled, restored on disable (0 = none)
@@ -47,6 +48,11 @@ class UITask : public AbstractUITask {
   int next_led_change = 0;
   int last_led_increment = 0;
 #endif
+#if defined(LED_POWER)
+  unsigned long _red_led_at = 0;   // next red-LED heartbeat edge (battery only)
+  bool _red_led_lit = false;       // red LED currently lit within its blink window
+  bool _red_led_out = false;       // pin held as OUTPUT (released to INPUT on external power)
+#endif
 
   UIScreen*            splash;
   ElementScreen*       pages[PAGE_COUNT];
@@ -54,6 +60,7 @@ class UITask : public AbstractUITask {
   UIScreen*            curr;
   MessagesScreen*      _messages;
   MessageDetailScreen* _detail;
+  AdvertDetailScreen*  _advert_detail;   // drill-down for a recently-heard advert
   HelpScreen*          _help;
 
   // triple-click pops up the help overlay; any press returns here
@@ -88,6 +95,7 @@ public:
     _msgcount = 0;
     _messages = NULL;
     _detail = NULL;
+    _advert_detail = NULL;
     _help = NULL;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
@@ -114,6 +122,13 @@ public:
   void toggleBuzzer();
   uint8_t getBuzzerMode() const { return _node_prefs ? _node_prefs->buzzer_mode : 0; }
   void setBuzzerMode(uint8_t m);   // persist + play a preview
+
+  // e-ink idle re-draw mode (Screen page): 0 = full re-draw, 1 = partial
+  uint8_t getIdleRefresh() const { return _node_prefs ? _node_prefs->eink_idle_refresh : 0; }
+  void setIdleRefresh(uint8_t m);                        // persist
+
+  // show the drill-down detail for a recently-heard advert
+  void showAdvertDetail(const AdvertPath& a);
 
   // displayed-time settings (Time page)
   uint8_t getTimeFormat() const { return _node_prefs ? _node_prefs->time_format : 0; }

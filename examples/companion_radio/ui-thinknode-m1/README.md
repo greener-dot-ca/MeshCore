@@ -7,6 +7,28 @@ of items: you scroll with one button and act/navigate with the other.
 This is the default M1 companion-radio BLE build. The previous UI is still
 available as a `*_legacy` build — see [Building](#building).
 
+## Features
+
+- **200×200 native e-ink rendering** — crisp, true-resolution text and chrome (no upscaling).
+- **Real Unicode text, symbols & icons** via a built-in GNU Unifont subset.
+- **Two-button navigation** — triangle scrolls/selects, circle pages and is a universal back; triple-click circle for Help.
+- **Status bar** — app-linked, GPS, muted, Bluetooth-off, charging, battery and clock indicators.
+- **No-flicker e-ink** — repaints only when something actually changed, never on a timer.
+- **Pages:**
+  - **Home** — node name, Buzzer/Bluetooth/GPS toggles, App/Unread/Uptime.
+  - **Messages** — unread-by-app queue grouped into conversations, with a drill-down word-wrapped read view.
+  - **Mesh** — `Send Advert` action + traffic stats (contacts, sent/recv, airtime, queue).
+  - **Adverts** — recently-heard nodes with relative time (`5m`); open one for its key, hops, path and heard-time.
+  - **Radio** — off-grid (client-repeat) toggle, 433/869/918 MHz preset, LoRa params + live RSSI/SNR/noise.
+  - **GPS** — toggle + last-good-fix position/sats/altitude.
+  - **Bluetooth** — toggle + pairing pin.
+  - **Buzz** — buzzer on/off + notification sound (CTU / Beep / Morse).
+  - **Time** — 12/24h format + UTC offset.
+  - **Screen** — idle e-ink re-draw mode: **Full** re-draws every pixel once a minute to fight UV fade/ghosting, or **Partial** for a subtle repaint.
+  - **Power** — battery %, voltage, charging + Hibernate.
+- **Graceful sleep** — after 15 s idle the frontlight turns off and the image is retained; while asleep it re-draws just once a minute (Full mode re-drives every pixel to counter UV-induced fade), instead of the constant repaint that drives the panel continuously.
+- **Red LED battery heartbeat** — blinks every ~5 s while on battery; when plugged in the charger keeps ownership of the LED.
+
 ## What's different from the old UI
 
 Compared with the previous M1 firmware (the `ui-new` build, now
@@ -28,9 +50,10 @@ Compared with the previous M1 firmware (the `ui-new` build, now
   instead of one flat list. Drill into a conversation to read its messages.
 - **At-a-glance status bar.** App-linked, GPS, muted, charging, battery and clock
   indicators across the top, plus a red 📵 when Bluetooth is turned off.
-- **Sleeps gracefully.** After ~10s idle the frontlight turns off but the image
-  stays on the e-ink (it's retained); any button press wakes it without also
-  acting on the screen.
+- **Sleeps gracefully.** After ~15s idle the frontlight turns off but the image
+  stays on the e-ink (it's retained); while asleep it re-draws only once a minute
+  (instead of every second), and any button press wakes it without also acting on
+  the screen.
 
 ## Using it
 
@@ -68,15 +91,21 @@ selection moves item-to-item and the view follows it.
 2. **Messages** — the unread messages (see below).
 3. **Mesh** — `Send Advert` action, then traffic stats: `Contacts`, `Sent F/D`,
    `Recv F/D`, `Airtime`, `Queue`.
-4. **Radio** — RF config + link. The `Off-grid` (client-repeat) toggle and the
+4. **Adverts** — recently-heard nodes (newest first) with how long ago each was
+   heard (`5m`). Select one to open its detail: `Key`, `Hops`, `Path` and `Heard`.
+5. **Radio** — RF config + link. The `Off-grid` (client-repeat) toggle and the
    `Off grid freq` preset (`433`/`869`/`918` MHz) are the editable controls; then
    the tuned LoRa params `Freq` (MHz), `BW` (kHz), `SF`, `CR`, `TX` (read-only,
    set via the app), and live readings `Noise`, `RSSI`, `SNR`.
-5. **GPS** — `GPS` toggle, then `Fix` (live?), `Last` (age of last good fix),
+6. **GPS** — `GPS` toggle, then `Fix` (live?), `Last` (age of last good fix),
    `Sats`, `Pos` (lat,lon), `Alt`. Position/sats/alt show the *last good fix* so
    the page stays useful after losing signal or switching GPS off.
-6. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
-7. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
+7. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
+8. **Buzz** — `Buzzer` toggle and notification `Sound` (CTU / Beep / Morse).
+9. **Time** — clock `Format` (12/24h) and `UTC +/-` offset.
+10. **Screen** — `Idle Rfsh`: how the e-ink re-draws once a minute while asleep —
+    `Full` (re-drives every pixel, clears UV fade/ghosting) or `Partial` (subtle).
+11. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
 
 A boot **Splash** screen (logo + version + build date) shows for ~3 s first.
 
@@ -149,7 +178,7 @@ body).
 |----------------------------|----------------|
 | `UIElements.{h,cpp}`       | `UIElement` struct, `ElemKind`, the `make*` factories, per-element draw. |
 | `ElementScreen.{h,cpp}`    | Scrollable element-list base: status bar, page-dots, scrollbar, focus/scroll logic, input routing. |
-| `Pages.{h,cpp}`            | Concrete screens (Splash, Home, Messages drill-down, Mesh, Radio, GPS, Bluetooth, Time, Power) and their element getters/callbacks. |
+| `Pages.{h,cpp}`            | Concrete screens (Splash, Home, Messages drill-down, Mesh, Adverts + detail, Radio, GPS, Bluetooth, Buzz, Time, Screen, Power) and their element getters/callbacks. |
 | `UITask.{h,cpp}`           | `AbstractUITask` implementation: owns the pages, button dispatch, refresh timing, LED/buzzer, message intake, shutdown. |
 | `NativeEinkDisplay.{h,cpp}`| `DisplayDriver` that draws the GxEPD2 panel 1:1 at 200×200 (no scale), with a CRC dirty-check so a static frame costs no panel refresh, plus a UTF-8-aware Unifont blitter. |
 | `unifont_glyphs.h`         | Generated packed GNU Unifont subset (sorted codepoint index + 1-bit glyph blob); see `tools/gen_unifont.py`. |
@@ -191,8 +220,10 @@ The legacy `ui-new` GxEPD-upscaler UI remains available as
 `ThinkNode_M1_companion_radio_ble_legacy`.
 
 Because the display is e-ink, `turnOff()` only kills the frontlight (the image is
-retained), so `AUTO_OFF_MILLIS = 10000` is a 10s frontlight timeout, not a screen
-clear; `KEEP_DISPLAY_ON_USB` keeps the panel lit while charging.
+retained), so `AUTO_OFF_MILLIS = 15000` is a 15s frontlight timeout, not a screen
+clear; `KEEP_DISPLAY_ON_USB` keeps the panel lit while charging. While asleep the
+panel is left static and only re-drawn every `EINK_IDLE_REFRESH_MILLIS` (1 min) —
+`Full` mode re-drives every pixel to counter UV fade, selectable on the Screen page.
 
 The mechanism: `main.cpp` includes `"UITask.h"` through the per-board
 `-I examples/companion_radio/<module>` include path and globs
