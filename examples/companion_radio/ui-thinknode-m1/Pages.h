@@ -74,7 +74,7 @@ public:
 };
 
 class BluetoothScreen : public ElementScreen {
-  UIElement _items[3];
+  UIElement _items[4];
 protected:
   int pageIndex() const override { return PAGE_BLUETOOTH; }
   int pageCount() const override { return PAGE_COUNT; }
@@ -206,9 +206,10 @@ public:
   int  render(DisplayDriver& display) override;
 };
 
-// Screen/display settings. "Idle Rfsh" picks how the e-ink re-draws once a minute
-// while the display is off: Full re-drives every pixel (clears UV fade/ghosting, but
-// a brief flash); Partial just repaints content (subtle, leaves drift).
+// Screen/display settings. "Refresh" picks how the e-ink re-draws the static image
+// when the display goes to sleep and on the once-a-minute idle tick (interactions
+// always use a fast partial): Full re-drives every pixel (clears UV fade/ghosting,
+// brief black/white flash -- best in direct sun); Partial just repaints (leaves drift).
 class ScreenSettingsScreen : public ElementScreen {
   UIElement _items[1];
 protected:

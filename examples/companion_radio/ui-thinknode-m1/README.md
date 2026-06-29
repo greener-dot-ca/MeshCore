@@ -24,7 +24,7 @@ available as a `*_legacy` build — see [Building](#building).
   - **Bluetooth** — toggle + pairing pin.
   - **Buzz** — buzzer on/off + notification sound (CTU / Beep / Morse).
   - **Time** — 12/24h format + UTC offset.
-  - **Screen** — idle e-ink re-draw mode: **Full** re-draws every pixel once a minute to fight UV fade/ghosting, or **Partial** for a subtle repaint.
+  - **Screen** — e-ink re-draw mode for the static sleep image (when the display sleeps + the once-a-minute idle tick; interactions stay fast/partial): **Full** re-draws every pixel to fight UV fade/ghosting (a brief flash, best in direct sun), or **Partial** for a snappy no-flash repaint.
   - **Power** — battery %, voltage, charging + Hibernate.
 - **Graceful sleep** — after 15 s idle the frontlight turns off and the image is retained; while asleep it re-draws just once a minute (Full mode re-drives every pixel to counter UV-induced fade), instead of the constant repaint that drives the panel continuously.
 - **Red LED battery heartbeat** — blinks every ~5 s while on battery; when plugged in the charger keeps ownership of the LED.
@@ -103,8 +103,10 @@ selection moves item-to-item and the view follows it.
 7. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
 8. **Buzz** — `Buzzer` toggle and notification `Sound` (CTU / Beep / Morse).
 9. **Time** — clock `Format` (12/24h) and `UTC +/-` offset.
-10. **Screen** — `Idle Rfsh`: how the e-ink re-draws once a minute while asleep —
-    `Full` (re-drives every pixel, clears UV fade/ghosting) or `Partial` (subtle).
+10. **Screen** — `Refresh`: how the e-ink re-draws the static sleep image (when the
+    display goes to sleep + the once-a-minute idle tick; interactions stay fast) —
+    `Full` (re-drives every pixel, clears UV fade/ghosting, brief flash — best in
+    direct sun) or `Partial` (snappy, no flash).
 11. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
 
 A boot **Splash** screen (logo + version + build date) shows for ~3 s first.

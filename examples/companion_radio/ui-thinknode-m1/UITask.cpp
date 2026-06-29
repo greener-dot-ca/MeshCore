@@ -348,8 +348,8 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
   _msgcount = msgcount;
   playMsgSound(path_len);   // configured notification sound (morse mode uses the hops)
 
-  if (_display != NULL && !_display->isOn() && !hasConnection()) {
-    _display->turnOn();
+  if (_display != NULL && !_display->isOn()) {
+    _display->turnOn();   // light the screen/backlight on a new message (even when app-connected)
   }
 
   // pop the newest message into the read view, then auto-return after ~10s.
@@ -561,6 +561,9 @@ void UITask::loop() {
     bool asleep = millis() > _auto_off;
     if (asleep && _display->isOn()) {
       _display->turnOff();
+      // Full mode: clean the panel as it goes to sleep, so the static image left on
+      // screen (what sits in the sun for the next minute+) has no partial-update ghost.
+      if (getIdleRefresh() == 0) _display->fullRefresh();
       _idle_refresh_at = millis() + EINK_IDLE_REFRESH_MILLIS;
       _next_refresh = 0;   // repaint now so the selection bar disappears immediately
     }

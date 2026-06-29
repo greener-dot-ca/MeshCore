@@ -61,7 +61,7 @@ public:
    */
   void begin(const char* prefix, char* name, uint32_t pin_code);
 
-  void disconnect();
+  void disconnect() override;
   void enable() override;
   void disable() override;
   bool isEnabled() const override { return _isEnabled; }

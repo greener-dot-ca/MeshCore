@@ -11,6 +11,7 @@ protected:
 public:
   virtual void enable() = 0;
   virtual void disable() = 0;
+  virtual void disconnect() {}   // drop the current link (stays enabled/advertising); no-op if N/A
   virtual bool isEnabled() const = 0;
 
   virtual bool isConnected() const = 0;

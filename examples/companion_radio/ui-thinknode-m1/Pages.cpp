@@ -139,6 +139,11 @@ static void bleToggle(const UIElement& e) {
   if (t->isSerialEnabled()) t->disableSerial(); else t->enableSerial();
   t->showAlert(t->isSerialEnabled() ? "BLE: ON" : "BLE: OFF", 800);
 }
+static void bleDisconnectCb(const UIElement& e) {   // drop the link so another device can pair/connect
+  UITask* t = T(e);
+  t->disconnectSerial();
+  t->showAlert(t->hasConnection() ? "Disconnecting.." : "Not connected", 800);
+}
 static bool buzzerGet(const UIElement& e)    { return !T(e)->isBuzzerQuiet(); }
 static void buzzerToggle(const UIElement& e) { T(e)->toggleBuzzer(); }
 static const char* const buzzModeOpts[] = { "CTU", "Beep", "Morse" };
@@ -339,7 +344,8 @@ BluetoothScreen::BluetoothScreen(UITask* task, NodePrefs* prefs) : ElementScreen
   _items[0] = makeToggle("Bluetooth", task, bleGet, bleToggle);
   _items[1] = makeLabel("App", appConnText, task);
   _items[2] = makeLabel("Pin", blePinText,  task);
-  _elems = _items; _count = 3;
+  _items[3] = makeAction("Disconnect", task, bleDisconnectCb);   // drop link -> switch devices
+  _elems = _items; _count = 4;
 }
 
 // ============================================================ BuzzScreen
@@ -751,6 +757,6 @@ int AdvertDetailScreen::render(DisplayDriver& d) {
 // ============================================================ ScreenSettingsScreen
 ScreenSettingsScreen::ScreenSettingsScreen(UITask* task, NodePrefs* prefs)
     : ElementScreen(task, prefs, "Screen") {
-  _items[0] = makeCycle("Idle Rfsh", task, idleRfshOpts, 2, idleRfshGet, idleRfshNext);
+  _items[0] = makeCycle("Refresh", task, idleRfshOpts, 2, idleRfshGet, idleRfshNext);
   _elems = _items; _count = 1;
 }
