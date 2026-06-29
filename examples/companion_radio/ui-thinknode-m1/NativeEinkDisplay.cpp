@@ -67,13 +67,16 @@ int NativeEinkDisplay::blitGlyph(uint32_t cp, int x, int y, int scale) {
 // ---- lifecycle (mirrors GxEPDDisplay, native resolution) -------------------------
 
 bool NativeEinkDisplay::begin() {
-  display.epd2.selectSPI(SPI1, SPISettings(4000000, MSBFIRST, SPI_MODE0));
-  SPI1.begin();
+  // SPI bus + settings are owned by the GxEPD2 fork (passed via the constructor); init()
+  // calls SPI1.begin() itself. Default settings already match: 4 MHz / MSB / SPI_MODE0.
   display.init(115200, true, 2, false);
   display.setRotation(DISPLAY_ROTATION);
+  // Steady state is partial (fast) mode; the fork auto-promotes the very first refresh
+  // after init to a full one, giving a clean white baseline.
   display.setPartialWindow(0, 0, display.width(), display.height());
   display.fillScreen(GxEPD_WHITE);
   display.display(true);
+  _partial_count = 0;
 #if defined(DISP_BACKLIGHT)
   digitalWrite(DISP_BACKLIGHT, LOW);
   pinMode(DISP_BACKLIGHT, OUTPUT);
@@ -102,6 +105,14 @@ void NativeEinkDisplay::clear() {
 }
 
 void NativeEinkDisplay::startFrame(Color bkg) {
+  // Ghost-clear happens here, BEFORE content is drawn, so the swing flushes the panel and
+  // the very next endFrame repaints content in one go (no blank flash of missing content).
+  if (_clear_pending || _partial_count >= EINK_LIMIT_FASTREFRESH) {
+    swingClear();
+    _clear_pending = false;
+    _partial_count = 0;
+    last_display_crc_value = 0;   // force endFrame to repaint after the clear
+  }
   display.fillScreen(GxEPD_WHITE);
   _curr_color = GxEPD_BLACK;
   display_crc.reset();
@@ -184,24 +195,27 @@ void NativeEinkDisplay::translateUTF8ToBlocks(char* dest, const char* src, size_
   dest[i] = 0;
 }
 
-// Clear accumulated ghosting by cycling the whole screen black->white using the
-// NORMAL partial-update path (which works reliably on this panel), then letting
-// the caller repaint content. A true full refresh (display(false)) or a mid-
-// session init() leaves this SSD1681 unable to render cleanly afterwards (blank /
-// corrupt), so we deliberately stay in partial mode and just exercise every pixel
-// through a full black/white swing instead.
-void NativeEinkDisplay::fullRefresh() {
+// Flush accumulated ghosting by cycling every pixel black->white on the crisp partial
+// waveform. Unlike the OTP full-refresh LUT (which under-drives unchanged pixels and
+// leaves salt-and-pepper speckle), this physically transitions every pixel, so it clears
+// cleanly. Caller repaints content immediately afterwards (see startFrame).
+void NativeEinkDisplay::swingClear() {
   display.fillScreen(GxEPD_BLACK);
-  display.display(true);          // whole screen -> black (partial)
+  display.display(true);          // whole screen -> black
   display.fillScreen(GxEPD_WHITE);
-  display.display(true);          // whole screen -> white (partial)
+  display.display(true);          // whole screen -> white
+}
+
+// Request a ghost-clearing swing before the next painted frame.
+void NativeEinkDisplay::fullRefresh() {
+  _clear_pending = true;
   last_display_crc_value = 0;     // force the next render to repaint content
 }
 
 void NativeEinkDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
-  if (crc != last_display_crc_value) {
-    display.display(true);                      // partial (auto-promoted to full right after init)
-    last_display_crc_value = crc;
-  }
+  if (crc == last_display_crc_value) return;    // unchanged -- skip the refresh
+  display.display(true);                        // crisp partial (fast) refresh
+  _partial_count++;
+  last_display_crc_value = crc;
 }
