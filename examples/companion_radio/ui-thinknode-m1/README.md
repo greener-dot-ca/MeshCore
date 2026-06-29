@@ -11,7 +11,7 @@ available as a `*_legacy` build — see [Building](#building).
 
 - **200×200 native e-ink rendering** — crisp, true-resolution text and chrome (no upscaling).
 - **Real Unicode text, symbols & icons** via a built-in GNU Unifont subset.
-- **Two-button navigation** — triangle scrolls/selects, circle pages and is a universal back; triple-click circle for Help.
+- **Two-button navigation** — circle scrolls/selects, triangle pages and is a universal back; triple-click triangle for Help.
 - **Status bar** — app-linked, GPS, muted, Bluetooth-off, charging, battery and clock indicators.
 - **No-flicker e-ink** — repaints only when something actually changed, never on a timer.
 - **Pages:**
@@ -42,7 +42,7 @@ Compared with the previous M1 firmware (the `ui-new` build, now
 - **No e-ink flicker.** The screen redraws only when you press a button (and even
   then only if something actually changed), instead of the old timer-driven
   repaint every 1–5 seconds. Easier on the eyes and the battery.
-- **Two-button navigation.** Triangle moves/selects within a screen; circle flips
+- **Two-button navigation.** Circle moves/selects within a screen; triangle flips
   between pages and is a universal "back" (details below).
 - **Organized Messages.** Unread messages are grouped into conversations — one
   per channel and per direct contact, with a count and a last-message time —
@@ -63,15 +63,15 @@ button and the **circle** button.
 
 | Button       | Click               | Long press (hold)       | Double click             |
 |--------------|---------------------|-------------------------|--------------------------|
-| **Triangle** | next item (down)    | previous item (up)¹     | select / open the item   |
-| **Circle**   | next page           | previous page / back²   | jump to Home page        |
+| **Circle**   | next item (down)    | previous item (up)¹     | select / open the item   |
+| **Triangle** | next page           | previous page / back²   | jump to Home page        |
 
-Triple-click the circle button on any page to pop up the **Help** overlay (icon
+Triple-click the triangle button on any page to pop up the **Help** overlay (icon
 legend + this button guide); any press dismisses it.
 
-¹ In the first 8 s after boot, holding the triangle button instead enters CLI rescue.
+¹ In the first 8 s after boot, holding the circle button instead enters CLI rescue.
 
-² **Hold the circle button is always "back".** On a normal page it steps to the
+² **Hold the triangle button is always "back".** On a normal page it steps to the
 previous page. Inside Messages it pops up one level (message list →
 conversations) before resuming page navigation. In the read view it returns to
 the message list.
@@ -112,7 +112,7 @@ A boot **Splash** screen (logo + version + build date) shows for ~3 s first.
 
 A live view of the offline **"unread-by-app" queue** — messages received over the
 mesh that the companion phone app hasn't pulled yet — organized in two levels
-(triangle double-click descends, hold circle goes back up):
+(circle double-click descends, hold triangle goes back up):
 
 - **Conversations** — one row per channel *and* per direct contact, with a
   message count and the last message's relative time (`#general (5)`,
@@ -120,7 +120,7 @@ mesh that the companion phone app hasn't pulled yet — organized in two levels
 - **Messages** — every message in the chosen conversation, newest first. Channel
   rows show the sender (`Alice: hey all`); direct rows show just the text.
   Selecting one opens a full-screen, word-wrapped **read view** (top line is the
-  `#channel sender` breadcrumb; triangle pages down long messages, hold circle
+  `#channel sender` breadcrumb; circle pages down long messages, hold triangle
   returns to the list).
 
 This queue is the *only* on-device message store: there's no manual dismiss and
@@ -130,7 +130,7 @@ standalone, where the queue acts as a rolling buffer. Empty state shows
 "No messages".
 
 The status-bar icons are explained in the in-device Help overlay (triple-click
-circle).
+triangle).
 
 ---
 

@@ -605,11 +605,11 @@ int MessageDetailScreen::render(DisplayDriver& d) {
     d.setCursor(2, MD_BODY_TOP + i * UIELEM_ROW_H);
     d.print(lines[_scroll_line + i]);   // already glyph-translated
   }
-  if (_scroll_line + per < _total_lines) {        // more body below: triangle pages down
+  if (_scroll_line + per < _total_lines) {        // more body below: circle pages down
     d.drawTextRightAlign(d.width() - gutter - 1, MD_BOTTOM - UIELEM_ROW_H, "v");
   }
 
-  // list scrollbar: this message's position in the list (newest at top); triangle
+  // list scrollbar: this message's position in the list (newest at top); circle
   // pages through the body then on to the next message.
   if (_total > 1) {
     int x = d.width() - 2;
@@ -644,14 +644,14 @@ int HelpScreen::render(DisplayDriver& d) {
     y += 18;
   }
 
-  // ---- two buttons: ▲ moves/selects within a screen, ● navigates + always backs out ----
+  // ---- two buttons: ● moves/selects within a screen, ▲ navigates pages + always backs out ----
   d.fillRect(0, y, d.width(), 1);                             // separator
   y += 5;
-  d.setCursor(2, y);       d.print("\xE2\x96\xB2");           // ▲
+  d.setCursor(2, y);       d.print("\xE2\x97\x8F");           // ● (circle = function/select)
   d.setCursor(22, y);      d.print("click next  hold prev");
   d.setCursor(22, y + 18); d.print("2x: select / open");
   y += 40;
-  d.setCursor(2, y);       d.print("\xE2\x97\x8F");           // ●
+  d.setCursor(2, y);       d.print("\xE2\x96\xB2");           // ▲ (triangle = page)
   d.setCursor(22, y);      d.print("click page  hold BACK");
   d.setCursor(22, y + 18); d.print("2x home  3x help");
 

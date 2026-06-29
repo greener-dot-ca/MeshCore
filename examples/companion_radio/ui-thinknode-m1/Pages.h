@@ -150,7 +150,7 @@ public:
 };
 
 // Full-screen word-wrapped read view for a single message (not an ElementScreen).
-// Holds its position in the message list (_idx/_total) so triangle can page
+// Holds its position in the message list (_idx/_total) so circle can page
 // through both the body and then on to the next message, with a list scrollbar.
 class MessageDetailScreen : public UIScreen {
   UITask*         _task;

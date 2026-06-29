@@ -433,8 +433,10 @@ bool UITask::isButtonPressed() const {
 }
 
 void UITask::loop() {
-  int ev  = user_btn.check();
-  int ev2 = back_btn.check();
+  // Per the official M1 manual: circle = function/select, triangle = page turn. ev drives
+  // the function/element logic, ev2 the page logic -- so circle feeds ev, triangle feeds ev2.
+  int ev  = back_btn.check();    // circle  (back_btn / GPIO39) = function / select
+  int ev2 = user_btn.check();    // triangle (user_btn / GPIO42) = page turn
   bool was_on = (_display != NULL && _display->isOn());   // a press that only wakes the screen shouldn't count as interaction
 
   if (curr == _help) {
@@ -447,10 +449,10 @@ void UITask::loop() {
     }
   } else if (curr == _detail) {
     // ---- read view ----
-    //   triangle  click       = page down body, then on to the next (older) message
-    //   triangle  hold        = previous (newer) message  (CLI rescue in first 8s)
-    //   circle    hold        = back to the message list (keeps the drill context)
-    //   circle    double      = Home
+    //   circle    click       = page down body, then on to the next (older) message
+    //   circle    hold        = previous (newer) message  (CLI rescue in first 8s)
+    //   triangle  hold        = back to the message list (keeps the drill context)
+    //   triangle  double      = Home
     if (ev == BUTTON_EVENT_LONG_PRESS && millis() - ui_started_at < 8000) {
       the_mesh.enterCLIRescue();
     } else if (ev == BUTTON_EVENT_LONG_PRESS) {
@@ -468,7 +470,7 @@ void UITask::loop() {
       if (!wakeIfOff()) { curr_page = PAGE_MESSAGES; setCurrScreen(_messages); }
     }
   } else {
-    // ---- triangle button (user_btn / GPIO42): ELEMENT navigation ----
+    // ---- circle button (back_btn / GPIO39): ELEMENT / function navigation ----
     //   click        = next element (down)
     //   long press   = previous element (up)   (or CLI rescue in first 8s)
     //   double-click = activate / select focused element
@@ -484,7 +486,7 @@ void UITask::loop() {
       if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->activateFocused();
     }
 
-    // ---- circle button (back_btn / GPIO39): PAGE navigation ----
+    // ---- triangle button (user_btn / GPIO42): PAGE navigation ----
     //   click        = next page
     //   long press   = previous page (back), or pop up one Messages drill level
     //   double-click = go to home page
@@ -531,24 +533,21 @@ void UITask::loop() {
       _auto_off = millis() + AUTO_OFF_MILLIS;
     }
 #endif
-    // Sleep is backlight-only: e-ink retains its image after turnOff(). Instead of
-    // repainting every second while asleep (which drives the panel continuously and
-    // accelerates UV fade), we kill the frontlight, repaint once to drop the selection
-    // bar, then leave the image static and only re-draw once a minute below.
+    // Sleep is backlight-only: e-ink retains its image after turnOff(). We kill the
+    // frontlight and repaint once (partial) to drop the selection marker, then keep the
+    // clock/ages current with a plain partial once a minute. Ghosting is cleared by the
+    // in-session swing (every EINK_LIMIT_FASTREFRESH partials, inside NativeEinkDisplay) --
+    // no dedicated full/idle refresh here, so the only flash is that occasional swing.
     bool asleep = millis() > _auto_off;
     if (asleep && _display->isOn()) {
       _display->turnOff();
-      // Clean the panel as it goes to sleep, so the static image left on screen has
-      // no accumulated partial-update ghost.
-      _display->fullRefresh();
       _idle_refresh_at = millis() + EINK_IDLE_REFRESH_MILLIS;
-      _next_refresh = 0;   // repaint now so the selection marker disappears immediately
+      _next_refresh = 0;   // partial repaint so the selection marker disappears immediately
     }
-    // periodic idle re-draw: keeps ages current and re-drives every pixel once a minute
+    // periodic idle re-draw: keep the clock/ages current with a plain partial
     if (asleep && _idle_refresh_at != 0 && millis() > _idle_refresh_at) {
-      _display->fullRefresh();
       _idle_refresh_at = millis() + EINK_IDLE_REFRESH_MILLIS;
-      _next_refresh = 0;   // force the render below
+      _next_refresh = 0;   // force the (partial) render below
     }
 #else
     const bool asleep = false;

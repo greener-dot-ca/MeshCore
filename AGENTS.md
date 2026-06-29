@@ -12,7 +12,7 @@ MeshCore and does **not** contain the M1 native UI.
 
 A companion-radio UI for the ThinkNode M1's **200×200 two-button e-ink** display: native
 full-resolution rendering, real Unicode text via a built-in GNU Unifont subset, two-button
-navigation (triangle scrolls/selects, circle pages/back), and a live per-packet **RX Log**.
+navigation (circle scrolls/selects, triangle pages/back), and a live per-packet **RX Log**.
 
 The panel (GDEH0154D67 / SSD1681) is driven through **Meshtastic's pinned GxEPD2 fork**
 using the `GxEPD2_154_D67` class. Every visible update uses the crisp **partial** waveform;
