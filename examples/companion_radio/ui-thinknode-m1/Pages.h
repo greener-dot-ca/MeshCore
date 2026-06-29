@@ -11,13 +11,12 @@ enum {
   PAGE_HOME = 0,
   PAGE_MESSAGES,
   PAGE_MESH,
-  PAGE_ADVERTS,
+  PAGE_RXLOG,
   PAGE_RADIO,
   PAGE_GPS,
   PAGE_BLUETOOTH,
   PAGE_BUZZ,
   PAGE_TIME,
-  PAGE_SCREEN,
   PAGE_SHUTDOWN,
   PAGE_COUNT
 };
@@ -173,50 +172,25 @@ public:
   int  render(DisplayDriver& display) override;
 };
 
-// Recently-heard adverts: nodes we've received an advert from, newest first, each
-// with how long ago ("5m"). Rebuilt every render from MyMesh's advert_paths table
-// (the single source of truth). Activate a row to drill into its key/path detail.
-class AdvertsScreen : public ElementScreen {
+// Live RX log: every packet the radio decodes, newest first, each row showing the
+// packet type, signal (RSSI/SNR), hop count and -- when the decode resolves one -- the
+// sender/channel name. Rebuilt every render from MyMesh's rx_log ring (the source of
+// truth); rows scroll but don't drill down. Clock time ("14:02") is right-aligned.
+class RxLogScreen : public ElementScreen {
 public:
-  struct AdvRef { AdvertsScreen* scr; int idx; };
+  struct RxRef { RxLogScreen* scr; int idx; };
 private:
-  struct Row { char line[40]; char time[8]; };   // row text + relative age
-  UIElement  _items[ADVERT_PATH_TABLE_SIZE + 1];  // +1 for the empty-state label
-  AdvRef     _refs[ADVERT_PATH_TABLE_SIZE];
-  Row        _rows[ADVERT_PATH_TABLE_SIZE];
-  AdvertPath _adv[ADVERT_PATH_TABLE_SIZE];        // cache backing the detail drill-down
+  struct Row { char line[40]; char time[8]; };   // "TYPE -rssi/+snr name" + HH:MM
+  UIElement  _items[RX_LOG_SIZE + 1];             // +1 for the empty-state label
+  RxRef      _refs[RX_LOG_SIZE];
+  Row        _rows[RX_LOG_SIZE];
 protected:
   void rebuild() override;
-  int pageIndex() const override { return PAGE_ADVERTS; }
+  int pageIndex() const override { return PAGE_RXLOG; }
   int pageCount() const override { return PAGE_COUNT; }
 public:
-  AdvertsScreen(UITask* task, NodePrefs* prefs);
-  const char* timeAt(int i) const { return _rows[i].time; }   // right-aligned relative age
-  void openDetail(int idx);     // activate a row -> advert detail view
-};
-
-// Full-screen detail for one recently-heard advert: name, key, hops, path, heard
-// (relative + absolute). Shown like the message read view (not a carousel page).
-class AdvertDetailScreen : public UIScreen {
-  UITask*    _task;
-  AdvertPath _adv;
-public:
-  AdvertDetailScreen(UITask* task) : _task(task) { _adv.name[0] = 0; _adv.recv_timestamp = 0; }
-  void setAdvert(const AdvertPath& a) { _adv = a; }
-  int  render(DisplayDriver& display) override;
-};
-
-// Screen/display settings. "Refresh" picks how the e-ink re-draws the static image
-// when the display goes to sleep and on the once-a-minute idle tick (interactions
-// always use a fast partial): Full re-drives every pixel (clears UV fade/ghosting,
-// brief black/white flash -- best in direct sun); Partial just repaints (leaves drift).
-class ScreenSettingsScreen : public ElementScreen {
-  UIElement _items[1];
-protected:
-  int pageIndex() const override { return PAGE_SCREEN; }
-  int pageCount() const override { return PAGE_COUNT; }
-public:
-  ScreenSettingsScreen(UITask* task, NodePrefs* prefs);
+  RxLogScreen(UITask* task, NodePrefs* prefs);
+  const char* timeAt(int i) const { return _rows[i].time; }   // right-aligned HH:MM
 };
 
 // Pop-up help overlay (not a carousel page -- shown like the message read view):

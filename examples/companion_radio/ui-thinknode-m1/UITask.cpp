@@ -66,17 +66,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   splash = new SplashScreen(this);
   _messages = new MessagesScreen(this, node_prefs);
   _detail = new MessageDetailScreen(this);
-  _advert_detail = new AdvertDetailScreen(this);
   _help = new HelpScreen();
   pages[PAGE_HOME]      = new HomeScreen(this, node_prefs);
   pages[PAGE_MESH]      = new MeshScreen(this, node_prefs);
-  pages[PAGE_ADVERTS]   = new AdvertsScreen(this, node_prefs);
+  pages[PAGE_RXLOG]     = new RxLogScreen(this, node_prefs);
   pages[PAGE_RADIO]     = new RadioScreen(this, node_prefs);
   pages[PAGE_GPS]       = new GPSScreen(this, node_prefs);
   pages[PAGE_BLUETOOTH] = new BluetoothScreen(this, node_prefs);
   pages[PAGE_BUZZ]      = new BuzzScreen(this, node_prefs);
   pages[PAGE_TIME]      = new TimeScreen(this, node_prefs);
-  pages[PAGE_SCREEN]    = new ScreenSettingsScreen(this, node_prefs);
   pages[PAGE_MESSAGES]  = _messages;
   pages[PAGE_SHUTDOWN]  = new ShutdownScreen(this, node_prefs);
 
@@ -318,18 +316,6 @@ void UITask::setUtcOffsetMin(int16_t m) {
   the_mesh.savePrefs();
 }
 
-void UITask::setIdleRefresh(uint8_t m) {
-  if (!_node_prefs) return;
-  _node_prefs->eink_idle_refresh = m & 1;
-  the_mesh.savePrefs();
-}
-
-void UITask::showAdvertDetail(const AdvertPath& a) {
-  if (!_advert_detail) return;
-  _advert_detail->setAdvert(a);
-  setCurrScreen(_advert_detail);
-}
-
 void UITask::formatClock(char* out, size_t n) const {
   uiFormatClock(_node_prefs, currentEpoch(), out, n);
 }
@@ -459,15 +445,6 @@ void UITask::loop() {
         setCurrScreen(_help_return ? _help_return : (UIScreen*)pages[PAGE_HOME]);
       }
     }
-  } else if (curr == _advert_detail) {
-    // ---- advert detail ---- circle hold = back to the list; double = Home; triple = help
-    if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
-      if (!wakeIfOff()) gotoHomeScreen();
-    } else if (ev2 == BUTTON_EVENT_TRIPLE_CLICK) {
-      if (!wakeIfOff()) showHelp();
-    } else if (ev2 == BUTTON_EVENT_LONG_PRESS || ev != BUTTON_EVENT_NONE) {
-      if (!wakeIfOff()) { curr_page = PAGE_ADVERTS; setCurrScreen(pages[PAGE_ADVERTS]); }
-    }
   } else if (curr == _detail) {
     // ---- read view ----
     //   triangle  click       = page down body, then on to the next (older) message
@@ -561,15 +538,15 @@ void UITask::loop() {
     bool asleep = millis() > _auto_off;
     if (asleep && _display->isOn()) {
       _display->turnOff();
-      // Full mode: clean the panel as it goes to sleep, so the static image left on
-      // screen (what sits in the sun for the next minute+) has no partial-update ghost.
-      if (getIdleRefresh() == 0) _display->fullRefresh();
+      // Clean the panel as it goes to sleep, so the static image left on screen has
+      // no accumulated partial-update ghost.
+      _display->fullRefresh();
       _idle_refresh_at = millis() + EINK_IDLE_REFRESH_MILLIS;
-      _next_refresh = 0;   // repaint now so the selection bar disappears immediately
+      _next_refresh = 0;   // repaint now so the selection marker disappears immediately
     }
-    // periodic idle re-draw: keeps ages current and (Full mode) re-drives every pixel
+    // periodic idle re-draw: keeps ages current and re-drives every pixel once a minute
     if (asleep && _idle_refresh_at != 0 && millis() > _idle_refresh_at) {
-      if (getIdleRefresh() == 0) _display->fullRefresh();   // 0 = full, 1 = partial
+      _display->fullRefresh();
       _idle_refresh_at = millis() + EINK_IDLE_REFRESH_MILLIS;
       _next_refresh = 0;   // force the render below
     }
@@ -580,7 +557,7 @@ void UITask::loop() {
     if (millis() >= _next_refresh && curr) {
       // hide the selection bar while asleep (visual "screen off" hint); it
       // returns on the next render once awake.
-      ElementScreen* page = (onPage() && curr != _detail && curr != _advert_detail && curr != _help) ? (ElementScreen*)curr : NULL;
+      ElementScreen* page = (onPage() && curr != _detail && curr != _help) ? (ElementScreen*)curr : NULL;
       if (page) page->setFocusVisible(!asleep);
 
       _display->startFrame();

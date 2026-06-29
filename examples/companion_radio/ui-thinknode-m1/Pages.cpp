@@ -227,20 +227,31 @@ static void convActivate(const UIElement& e) {  // drill into a conversation
   r->scr->selectConversation(r->idx);
 }
 
-// ----- advert (recently-heard) row callbacks -----
-static const char* advRowTime(const UIElement& e) {   // right-aligned relative age
-  AdvertsScreen::AdvRef* r = (AdvertsScreen::AdvRef*)e.ctx;
+// ----- RX log row callbacks + payload-type label -----
+static const char* rxRowTime(const UIElement& e) {    // right-aligned HH:MM
+  RxLogScreen::RxRef* r = (RxLogScreen::RxRef*)e.ctx;
   return r->scr->timeAt(r->idx);
 }
-static void advRowActivate(const UIElement& e) {      // open the advert detail view
-  AdvertsScreen::AdvRef* r = (AdvertsScreen::AdvRef*)e.ctx;
-  r->scr->openDetail(r->idx);
-}
+static void rxRowNoop(const UIElement&) {}            // rows scroll but don't drill down
 
-// ----- Screen settings callbacks -----
-static const char* const idleRfshOpts[] = { "Full", "Partial" };
-static int  idleRfshGet(const UIElement& e)  { return T(e)->getIdleRefresh(); }
-static void idleRfshNext(const UIElement& e) { T(e)->setIdleRefresh((T(e)->getIdleRefresh() + 1) & 1); }
+static const char* rxTypeLabel(uint8_t ptype) {
+  switch (ptype) {
+    case PAYLOAD_TYPE_ADVERT:    return "ADV";
+    case PAYLOAD_TYPE_TXT_MSG:   return "MSG";
+    case PAYLOAD_TYPE_GRP_TXT:   return "CHAN";
+    case PAYLOAD_TYPE_ACK:       return "ACK";
+    case PAYLOAD_TYPE_PATH:      return "PATH";
+    case PAYLOAD_TYPE_TRACE:     return "TRACE";
+    case PAYLOAD_TYPE_REQ:       return "REQ";
+    case PAYLOAD_TYPE_RESPONSE:  return "RESP";
+    case PAYLOAD_TYPE_ANON_REQ:  return "AREQ";
+    case PAYLOAD_TYPE_GRP_DATA:  return "GDAT";
+    case PAYLOAD_TYPE_CONTROL:   return "CTRL";
+    case PAYLOAD_TYPE_MULTIPART: return "MPRT";
+    case PAYLOAD_TYPE_RAW_CUSTOM:return "RAW";
+    default:                     return "?";
+  }
+}
 
 // Compact relative age of an epoch timestamp ("now"/"5m"/"3h"/"2d"), into `out`.
 // Empty when the timestamp or the device clock is unusable.
@@ -671,92 +682,31 @@ void ShutdownScreen::poll() {
 }
 
 // ============================================================ AdvertsScreen
-AdvertsScreen::AdvertsScreen(UITask* task, NodePrefs* prefs)
-    : ElementScreen(task, prefs, "Adverts") {
+RxLogScreen::RxLogScreen(UITask* task, NodePrefs* prefs)
+    : ElementScreen(task, prefs, "RX Log") {
   _elems = _items; _count = 0;
 }
 
-// Rebuilt every render from MyMesh's advert_paths table (newest first). Non-empty
-// entries sort ahead of empty slots, so they are contiguous from index 0 and the
-// row index maps 1:1 onto _adv[] for the detail drill-down.
-void AdvertsScreen::rebuild() {
-  int got = the_mesh.getRecentlyHeard(_adv, ADVERT_PATH_TABLE_SIZE);
+// Rebuilt every render from MyMesh's rx_log ring (newest first). Each row:
+// "<TYPE> <rssi>/<+snr> <name>" with the reception clock time right-aligned.
+void RxLogScreen::rebuild() {
+  static RxLogEntry rx[RX_LOG_SIZE];                   // transient scratch (single-threaded)
+  int got = the_mesh.getRxLog(rx, RX_LOG_SIZE);
   int n = 0;
   for (int i = 0; i < got; i++) {
-    if (_adv[i].recv_timestamp == 0) continue;          // empty slot
-    if (_adv[i].name[0])
-      snprintf(_rows[n].line, sizeof(_rows[n].line), "%s", _adv[i].name);
-    else
-      snprintf(_rows[n].line, sizeof(_rows[n].line), "%02X%02X%02X..",
-               _adv[i].pubkey_prefix[0], _adv[i].pubkey_prefix[1], _adv[i].pubkey_prefix[2]);
-    relTime(_rows[n].time, sizeof(_rows[n].time), _adv[i].recv_timestamp);
+    const RxLogEntry& e = rx[i];
+    snprintf(_rows[n].line, sizeof(_rows[n].line), "%s %d/%+d %s",
+             rxTypeLabel(e.ptype), (int)e.rssi, (int)e.snr, e.name[0] ? e.name : "?");
+    if (e.timestamp) uiFormatClock(_prefs, e.timestamp, _rows[n].time, sizeof(_rows[n].time));
+    else             _rows[n].time[0] = 0;
     _refs[n].scr = this; _refs[n].idx = n;
-    _items[n] = makeMessageRow(_rows[n].line, &_refs[n], advRowTime, advRowActivate);
+    _items[n] = makeMessageRow(_rows[n].line, &_refs[n], rxRowTime, rxRowNoop);
     n++;
   }
   if (n == 0) {
-    _items[0] = makeLabel("No adverts heard", nullptr, nullptr);
+    _items[0] = makeLabel("No packets yet", nullptr, nullptr);
     _elems = _items; _count = 1;
     return;
   }
   _elems = _items; _count = n;
-}
-
-void AdvertsScreen::openDetail(int idx) {
-  if (idx < 0 || idx >= ADVERT_PATH_TABLE_SIZE) return;
-  _task->showAdvertDetail(_adv[idx]);
-}
-
-// ============================================================ AdvertDetailScreen
-int AdvertDetailScreen::render(DisplayDriver& d) {
-  d.setTextSize(1);
-
-  // header: node name (or "(unnamed)")
-  char nm[40];
-  d.translateUTF8ToBlocks(nm, _adv.name[0] ? _adv.name : "(unnamed)", sizeof(nm));
-  d.setColor(DisplayDriver::GREEN);
-  d.drawTextEllipsized(0, 2, d.width(), nm);
-  d.setColor(DisplayDriver::LIGHT);
-  d.fillRect(0, 20, d.width(), 1);
-
-  int y = 24;
-  char line[80];
-
-  // Key: hex of the 7-byte public-key prefix
-  snprintf(line, sizeof(line), "Key %02X%02X%02X%02X%02X%02X%02X",
-    _adv.pubkey_prefix[0], _adv.pubkey_prefix[1], _adv.pubkey_prefix[2], _adv.pubkey_prefix[3],
-    _adv.pubkey_prefix[4], _adv.pubkey_prefix[5], _adv.pubkey_prefix[6]);
-  d.setCursor(0, y); d.print(line); y += 18;
-
-  // Hops: path length (0 = heard direct)
-  snprintf(line, sizeof(line), "Hops %u", (unsigned)_adv.path_len);
-  d.setCursor(0, y); d.print(line); y += 18;
-
-  // Path: hex of each repeater hash byte (or "Direct")
-  char path[3 * MAX_PATH_SIZE + 1]; path[0] = 0;
-  if (_adv.path_len == 0) {
-    strcpy(path, "Direct");
-  } else {
-    for (int i = 0; i < _adv.path_len && i < MAX_PATH_SIZE; i++) {
-      char hx[4]; snprintf(hx, sizeof(hx), "%02X ", _adv.path[i]);
-      strncat(path, hx, sizeof(path) - strlen(path) - 1);
-    }
-  }
-  d.setCursor(0, y); d.print("Path"); y += 18;
-  d.drawTextEllipsized(0, y, d.width(), path); y += 18;
-
-  // Heard: relative age + absolute local time
-  char ago[12]; relTime(ago, sizeof(ago), _adv.recv_timestamp);
-  char when[24]; _task->formatDateTime(_adv.recv_timestamp, when, sizeof(when));
-  snprintf(line, sizeof(line), "Heard %s  %s", ago[0] ? ago : "?", when);
-  d.setCursor(0, y); d.print(line);
-
-  return 10000;   // e-ink: repaint only on interaction
-}
-
-// ============================================================ ScreenSettingsScreen
-ScreenSettingsScreen::ScreenSettingsScreen(UITask* task, NodePrefs* prefs)
-    : ElementScreen(task, prefs, "Screen") {
-  _items[0] = makeCycle("Refresh", task, idleRfshOpts, 2, idleRfshGet, idleRfshNext);
-  _elems = _items; _count = 1;
 }

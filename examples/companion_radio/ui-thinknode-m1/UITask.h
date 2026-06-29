@@ -60,7 +60,6 @@ class UITask : public AbstractUITask {
   UIScreen*            curr;
   MessagesScreen*      _messages;
   MessageDetailScreen* _detail;
-  AdvertDetailScreen*  _advert_detail;   // drill-down for a recently-heard advert
   HelpScreen*          _help;
 
   // triple-click pops up the help overlay; any press returns here
@@ -95,7 +94,6 @@ public:
     _msgcount = 0;
     _messages = NULL;
     _detail = NULL;
-    _advert_detail = NULL;
     _help = NULL;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
@@ -123,12 +121,6 @@ public:
   uint8_t getBuzzerMode() const { return _node_prefs ? _node_prefs->buzzer_mode : 0; }
   void setBuzzerMode(uint8_t m);   // persist + play a preview
 
-  // e-ink idle re-draw mode (Screen page): 0 = full re-draw, 1 = partial
-  uint8_t getIdleRefresh() const { return _node_prefs ? _node_prefs->eink_idle_refresh : 0; }
-  void setIdleRefresh(uint8_t m);                        // persist
-
-  // show the drill-down detail for a recently-heard advert
-  void showAdvertDetail(const AdvertPath& a);
 
   // displayed-time settings (Time page)
   uint8_t getTimeFormat() const { return _node_prefs ? _node_prefs->time_format : 0; }

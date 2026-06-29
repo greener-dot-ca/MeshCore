@@ -90,21 +90,23 @@ static int drawSymRight(DisplayDriver& d, int right, int y, const char* sym) {
 }
 
 void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const {
-  const int h = height();
-
-  // selection = reverse video: fill the whole row, draw contents in the
-  // background colour. Compact (no extra padding) and immune to descender clip.
-  DisplayDriver::Color fg = DisplayDriver::LIGHT;
+  // selection = a left ">" marker drawn in a reserved left gutter. Reverse-video filled
+  // the whole row solid, and this panel's fast-partial waveform streaked badly on that
+  // large solid area; a small marker paints/erases only a few pixels as focus moves, so
+  // there is essentially nothing to ghost.
+  static const char NAV_MARK[] = ">";
+  const DisplayDriver::Color fg = DisplayDriver::LIGHT;
+  const int ty = y + UIELEM_PAD;
+  d.setTextSize(1);
+  const int navw = d.getTextWidth(NAV_MARK);
   if (focused) {
     d.setColor(DisplayDriver::LIGHT);
-    d.fillRect(x, y, w, h);
-    fg = DisplayDriver::DARK;
+    d.setCursor(x, ty);
+    d.print(NAV_MARK);
   }
 
-  const int tx = x;            // flush to the left edge, same as the status-bar title
-  const int ty = y + UIELEM_PAD;
+  const int tx = x + navw;     // content sits past the reserved nav-dot gutter
   const int rightX = x + w - 3;
-  d.setTextSize(1);
 
   char buf[64];
 

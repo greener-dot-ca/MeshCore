@@ -84,6 +84,19 @@ struct AdvertPath {
   uint8_t path[MAX_PATH_SIZE];
 };
 
+// One received-packet log entry (newest-first ring, see MyMesh::logRx). Captures every
+// packet the radio decodes -- type/signal/hops for all, sender name when the decode
+// resolves one (adverts, DMs, channel msgs); others stay nameless (shown as "?").
+struct RxLogEntry {
+  uint32_t timestamp;   // RTC epoch secs at reception
+  char     name[20];    // sender / channel name if known ("" otherwise)
+  uint8_t  ptype;       // PAYLOAD_TYPE_*
+  int8_t   rssi;        // dBm
+  int8_t   snr;         // dB (rounded)
+  uint8_t  hops;        // path hash count (hops travelled)
+  uint8_t  flood;       // 1 = flood route, 0 = direct
+};
+
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
   MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store, AbstractUITask* ui=NULL);
@@ -102,6 +115,7 @@ public:
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
+  int  getRxLog(RxLogEntry dest[], int max_num);   // recent received packets, newest-first
 
   // ---- on-device viewing of queued (unread-by-app) messages ----
   // The offline queue is the single source of truth for "unread": messages
@@ -167,6 +181,8 @@ protected:
   void onRawDataRecv(mesh::Packet *packet) override;
   void onTraceRecv(mesh::Packet *packet, uint32_t tag, uint32_t auth_code, uint8_t flags,
                    const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) override;
+  void logRx(mesh::Packet* packet, int len, float score) override;   // push a row into rx_log
+  void rxLogSetSender(const char* name);   // set the name on the just-logged (newest) rx_log row
 
   uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override;
   uint32_t calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const override;
@@ -271,6 +287,11 @@ private:
 
   #define ADVERT_PATH_TABLE_SIZE   16
   AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
+
+  #define RX_LOG_SIZE   24
+  RxLogEntry rx_log[RX_LOG_SIZE];   // circular ring of recent receptions
+  uint8_t    rx_log_head;           // index of the newest entry
+  uint8_t    rx_log_count;          // entries filled (<= RX_LOG_SIZE)
 };
 
 extern MyMesh the_mesh;

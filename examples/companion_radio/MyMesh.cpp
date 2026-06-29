@@ -448,6 +448,7 @@ void MyMesh::onContactsFull() {
 }
 
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
+  rxLogSetSender(contact.name);   // name the rx_log row this advert just created
   if (_serial->isConnected()) {
     if (is_new) {
       writeContactRespFrame(PUSH_CODE_NEW_ADVERT, contact);
@@ -498,6 +499,41 @@ int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
     dest[i] = advert_paths[i];
   }
   return max_num;
+}
+
+// Per-packet RX log. logRx() is the Dispatcher hook fired for every received packet (just
+// before it is decoded), so we record signal/type/hops here; the decode callbacks that run
+// immediately after for the SAME packet fill in the sender name via rxLogSetSender().
+void MyMesh::logRx(mesh::Packet* packet, int len, float score) {
+  uint8_t idx = (rx_log_count == 0) ? 0 : (uint8_t)((rx_log_head + 1) % RX_LOG_SIZE);
+  rx_log_head = idx;
+  if (rx_log_count < RX_LOG_SIZE) rx_log_count++;
+  RxLogEntry& e = rx_log[idx];
+  e.timestamp = getRTCClock()->getCurrentTime();
+  e.name[0] = 0;
+  e.ptype = packet->getPayloadType();
+  e.rssi  = (int8_t)_radio->getLastRSSI();
+  e.snr   = (int8_t)lroundf(packet->getSNR());
+  e.hops  = packet->getPathHashCount();
+  e.flood = packet->isRouteFlood() ? 1 : 0;
+}
+
+void MyMesh::rxLogSetSender(const char* name) {
+  if (rx_log_count == 0 || !name || !name[0]) return;
+  RxLogEntry& e = rx_log[rx_log_head];
+  if (e.name[0]) return;   // first resolver wins
+  strncpy(e.name, name, sizeof(e.name) - 1);
+  e.name[sizeof(e.name) - 1] = 0;
+}
+
+int MyMesh::getRxLog(RxLogEntry dest[], int max_num) {
+  int n = rx_log_count;
+  if (n > max_num) n = max_num;
+  for (int i = 0; i < n; i++) {
+    int idx = ((int)rx_log_head - i + RX_LOG_SIZE) % RX_LOG_SIZE;
+    dest[i] = rx_log[idx];
+  }
+  return n;
 }
 
 void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
@@ -629,18 +665,21 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
+  rxLogSetSender(from.name);
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 }
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                const char *text) {
+  rxLogSetSender(from.name);
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_CLI_DATA, pkt, sender_timestamp, NULL, 0, text);
 }
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
+  rxLogSetSender(from.name);
   markConnectionActive(from);
   // from.sync_since change needs to be persisted
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
@@ -690,6 +729,7 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   if (getChannel(channel_idx, channel_details)) {
     channel_name = channel_details.name;
   }
+  rxLogSetSender(channel_name);
   if (_ui) _ui->newMsg(path_len, channel_name, text, offline_queue_len);
 #endif
 }
@@ -972,6 +1012,7 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   sign_data = NULL;
   dirty_contacts_expiry = 0;
   memset(advert_paths, 0, sizeof(advert_paths));
+  rx_log_head = rx_log_count = 0;
   memset(send_scope.key, 0, sizeof(send_scope.key));
   send_unscoped = false;
 

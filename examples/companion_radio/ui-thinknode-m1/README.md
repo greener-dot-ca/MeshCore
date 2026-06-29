@@ -18,15 +18,14 @@ available as a `*_legacy` build — see [Building](#building).
   - **Home** — node name, Buzzer/Bluetooth/GPS toggles, App/Unread/Uptime.
   - **Messages** — unread-by-app queue grouped into conversations, with a drill-down word-wrapped read view.
   - **Mesh** — `Send Advert` action + traffic stats (contacts, sent/recv, airtime, queue).
-  - **Adverts** — recently-heard nodes with relative time (`5m`); open one for its key, hops, path and heard-time.
+  - **RX Log** — live per-packet receive log: type (ADV/MSG/CHAN/ACK/…), signal (RSSI/SNR), sender/channel name when known, and reception time.
   - **Radio** — off-grid (client-repeat) toggle, 433/869/918 MHz preset, LoRa params + live RSSI/SNR/noise.
   - **GPS** — toggle + last-good-fix position/sats/altitude.
   - **Bluetooth** — toggle + pairing pin.
   - **Buzz** — buzzer on/off + notification sound (CTU / Beep / Morse).
   - **Time** — 12/24h format + UTC offset.
-  - **Screen** — e-ink re-draw mode for the static sleep image (when the display sleeps + the once-a-minute idle tick; interactions stay fast/partial): **Full** re-draws every pixel to fight UV fade/ghosting (a brief flash, best in direct sun), or **Partial** for a snappy no-flash repaint.
   - **Power** — battery %, voltage, charging + Hibernate.
-- **Graceful sleep** — after 15 s idle the frontlight turns off and the image is retained; while asleep it re-draws just once a minute (Full mode re-drives every pixel to counter UV-induced fade), instead of the constant repaint that drives the panel continuously.
+- **Graceful sleep** — after 15 s idle the frontlight turns off and the image is retained; as it sleeps (and once a minute after) the panel is re-driven with a full black/white swing to clear accumulated partial-update ghosting, instead of the constant repaint that drives the panel continuously.
 - **Red LED battery heartbeat** — blinks every ~5 s while on battery; when plugged in the charger keeps ownership of the LED.
 
 ## What's different from the old UI
@@ -91,8 +90,10 @@ selection moves item-to-item and the view follows it.
 2. **Messages** — the unread messages (see below).
 3. **Mesh** — `Send Advert` action, then traffic stats: `Contacts`, `Sent F/D`,
    `Recv F/D`, `Airtime`, `Queue`.
-4. **Adverts** — recently-heard nodes (newest first) with how long ago each was
-   heard (`5m`). Select one to open its detail: `Key`, `Hops`, `Path` and `Heard`.
+4. **RX Log** — live per-packet receive log (newest first): packet type
+   (`ADV`/`MSG`/`CHAN`/`ACK`/`PATH`/…), signal (`-rssi/+snr`), and the sender or
+   channel name when the decode resolves one (otherwise `?`), with the reception
+   clock time right-aligned. Scrolls; rebuilt from the in-RAM `rx_log` ring.
 5. **Radio** — RF config + link. The `Off-grid` (client-repeat) toggle and the
    `Off grid freq` preset (`433`/`869`/`918` MHz) are the editable controls; then
    the tuned LoRa params `Freq` (MHz), `BW` (kHz), `SF`, `CR`, `TX` (read-only,
@@ -103,11 +104,7 @@ selection moves item-to-item and the view follows it.
 7. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
 8. **Buzz** — `Buzzer` toggle and notification `Sound` (CTU / Beep / Morse).
 9. **Time** — clock `Format` (12/24h) and `UTC +/-` offset.
-10. **Screen** — `Refresh`: how the e-ink re-draws the static sleep image (when the
-    display goes to sleep + the once-a-minute idle tick; interactions stay fast) —
-    `Full` (re-drives every pixel, clears UV fade/ghosting, brief flash — best in
-    direct sun) or `Partial` (snappy, no flash).
-11. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
+10. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
 
 A boot **Splash** screen (logo + version + build date) shows for ~3 s first.
 
@@ -180,7 +177,7 @@ body).
 |----------------------------|----------------|
 | `UIElements.{h,cpp}`       | `UIElement` struct, `ElemKind`, the `make*` factories, per-element draw. |
 | `ElementScreen.{h,cpp}`    | Scrollable element-list base: status bar, page-dots, scrollbar, focus/scroll logic, input routing. |
-| `Pages.{h,cpp}`            | Concrete screens (Splash, Home, Messages drill-down, Mesh, Adverts + detail, Radio, GPS, Bluetooth, Buzz, Time, Screen, Power) and their element getters/callbacks. |
+| `Pages.{h,cpp}`            | Concrete screens (Splash, Home, Messages drill-down, Mesh, RX Log, Radio, GPS, Bluetooth, Buzz, Time, Power) and their element getters/callbacks. |
 | `UITask.{h,cpp}`           | `AbstractUITask` implementation: owns the pages, button dispatch, refresh timing, LED/buzzer, message intake, shutdown. |
 | `NativeEinkDisplay.{h,cpp}`| `DisplayDriver` that draws the GxEPD2 panel 1:1 at 200×200 (no scale), with a CRC dirty-check so a static frame costs no panel refresh, plus a UTF-8-aware Unifont blitter. |
 | `unifont_glyphs.h`         | Generated packed GNU Unifont subset (sorted codepoint index + 1-bit glyph blob); see `tools/gen_unifont.py`. |
@@ -224,8 +221,9 @@ The legacy `ui-new` GxEPD-upscaler UI remains available as
 Because the display is e-ink, `turnOff()` only kills the frontlight (the image is
 retained), so `AUTO_OFF_MILLIS = 15000` is a 15s frontlight timeout, not a screen
 clear; `KEEP_DISPLAY_ON_USB` keeps the panel lit while charging. While asleep the
-panel is left static and only re-drawn every `EINK_IDLE_REFRESH_MILLIS` (1 min) —
-`Full` mode re-drives every pixel to counter UV fade, selectable on the Screen page.
+panel is left static and only re-drawn every `EINK_IDLE_REFRESH_MILLIS` (1 min); as
+it sleeps and on each idle tick it is re-driven with a full black/white swing
+(`fullRefresh()`) to clear accumulated partial-update ghosting.
 
 The mechanism: `main.cpp` includes `"UITask.h"` through the per-board
 `-I examples/companion_radio/<module>` include path and globs
