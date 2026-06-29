@@ -140,6 +140,13 @@ bool UITask::wakeIfOff() {
   return false;
 }
 
+void UITask::revertFromPopup() {
+  _revert_at = 0;
+  curr_page = _revert_page;
+  setCurrScreen(_revert_screen ? _revert_screen : (UIScreen*)pages[PAGE_HOME]);
+  _auto_off = millis() + AUTO_OFF_MILLIS;   // keep the screen lit so the return is visible
+}
+
 void UITask::showAlert(const char* text, int duration_millis) {
   strcpy(_alert, text);
   _alert_expiry = millis() + duration_millis;
@@ -414,7 +421,24 @@ void UITask::shutdown(bool restart) {
   if (restart) {
     _board->reboot();
   } else {
-    _display->turnOff();
+    // Paint a clear, ghost-free "Hibernating" notice so the e-ink (which holds its
+    // last image with no power) plainly shows the device is asleep and how to wake
+    // it -- otherwise the frozen UI looks like a crash. Waking is a cold boot, which
+    // repaints over this on its own.
+    if (_display != NULL) {
+      _display->fullRefresh();
+      _display->startFrame();
+      const int w = _display->width();
+      const int h = _display->height();
+      _display->setColor(DisplayDriver::LIGHT);
+      _display->setTextSize(2);
+      _display->drawTextCentered(w / 2, h / 2 - 28, "Hibernating");
+      _display->setTextSize(1);
+      _display->drawTextCentered(w / 2, h / 2 + 12, "Press any key");
+      _display->drawTextCentered(w / 2, h / 2 + 28, "to wake");
+      _display->endFrame();   // e-ink update is synchronous; image persists after power-off
+      _display->turnOff();    // kill the frontlight; the panel keeps the image
+    }
     radio_driver.powerOff();
     _board->powerOff();
   }
@@ -446,6 +470,13 @@ void UITask::loop() {
         curr_page = _help_return_page;
         setCurrScreen(_help_return ? _help_return : (UIScreen*)pages[PAGE_HOME]);
       }
+    }
+  } else if (curr == _detail && _revert_at != 0) {
+    // ---- new-message popup ---- any button press dismisses it back to where the
+    // user was (instead of dropping into message navigation). A press while the
+    // screen is off only wakes it; the popup stays up until the next press.
+    if (ev != BUTTON_EVENT_NONE || ev2 != BUTTON_EVENT_NONE) {
+      if (!wakeIfOff()) revertFromPopup();
     }
   } else if (curr == _detail) {
     // ---- read view ----
@@ -512,10 +543,7 @@ void UITask::loop() {
 
   // auto-return from a popped-up new message to where the user was
   if (_revert_at != 0 && millis() > _revert_at) {
-    _revert_at = 0;
-    curr_page = _revert_page;
-    setCurrScreen(_revert_screen ? _revert_screen : (UIScreen*)pages[PAGE_HOME]);
-    _auto_off = millis() + AUTO_OFF_MILLIS;   // keep the screen lit so the return is visible
+    revertFromPopup();
   }
 
   userLedHandler();

@@ -39,8 +39,22 @@ public:
     digitalWrite(P_LORA_TX_LED, LOW);
     #endif
 
-    // power off board
-    sd_power_system_off();
+    // Arm the two function keys (active-low, internal pull-up) as SYSTEM OFF wake
+    // sources, so a press cold-boots the board out of Hibernate. Both are armed so
+    // either key wakes it. Mirrors MeshtinyBoard / TechoCardBoard.
+    nrf_gpio_cfg_sense_input(g_ADigitalPinMap[PIN_BUTTON1], NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_SENSE_LOW);
+    nrf_gpio_cfg_sense_input(g_ADigitalPinMap[PIN_BUTTON2], NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_SENSE_LOW);
+
+    // Enter SYSTEM OFF. Prefer the SoftDevice call when it's enabled; fall back to the
+    // POWER register directly so we always actually power down (a bare sd_power_system_off
+    // is a no-op when the SoftDevice is disabled, which would leave the device running).
+    uint8_t sd_enabled = 0;
+    sd_softdevice_is_enabled(&sd_enabled);
+    if (sd_enabled) {
+      sd_power_system_off();
+    } else {
+      NRF_POWER->SYSTEMOFF = POWER_SYSTEMOFF_SYSTEMOFF_Enter;
+    }
 
   }
 };

@@ -81,6 +81,7 @@ class UITask : public AbstractUITask {
   void prevPage();
   bool onPage() const { return curr != NULL && curr != splash; }
   bool wakeIfOff();   // a button press while the display is off only wakes it
+  void revertFromPopup();   // return from a new-message popup to where the user was
 
 public:
   UITask(mesh::MainBoard* board, BaseSerialInterface* serial)
