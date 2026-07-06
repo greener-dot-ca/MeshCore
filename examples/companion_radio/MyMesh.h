@@ -85,16 +85,20 @@ struct AdvertPath {
 };
 
 // One received-packet log entry (newest-first ring, see MyMesh::logRx). Captures every
-// packet the radio decodes -- type/signal/hops for all, sender name when the decode
-// resolves one (adverts, DMs, channel msgs); others stay nameless (shown as "?").
+// packet the radio decodes: type/signal/hops, the first byte of the ORIGIN's identity
+// when the raw payload carries one (src hash / pubkey / channel hash), and the trailing
+// relay hashes from the accumulated path -- the nodes this copy actually came through,
+// ending with the transmitter we heard.
 struct RxLogEntry {
   uint32_t timestamp;   // RTC epoch secs at reception
-  char     name[20];    // sender / channel name if known ("" otherwise)
   uint8_t  ptype;       // PAYLOAD_TYPE_*
   int8_t   rssi;        // dBm
   int8_t   snr;         // dB (rounded)
-  uint8_t  hops;        // path hash count (hops travelled)
+  uint8_t  hops;        // path hash count (relays so far)
   uint8_t  flood;       // 1 = flood route, 0 = direct
+  int16_t  key0;        // first byte of origin key / channel hash, -1 if the type has none
+  uint8_t  via[3];      // trailing path bytes: relays heard, oldest..newest (newest = transmitter)
+  uint8_t  via_len;     // 0..3 bytes valid in via[] (0: direct from origin, or TRACE)
 };
 
 class MyMesh : public BaseChatMesh, public DataStoreHost {
@@ -182,7 +186,6 @@ protected:
   void onTraceRecv(mesh::Packet *packet, uint32_t tag, uint32_t auth_code, uint8_t flags,
                    const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) override;
   void logRx(mesh::Packet* packet, int len, float score) override;   // push a row into rx_log
-  void rxLogSetSender(const char* name);   // set the name on the just-logged (newest) rx_log row
 
   uint32_t calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const override;
   uint32_t calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const override;

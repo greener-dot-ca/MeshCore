@@ -448,7 +448,6 @@ void MyMesh::onContactsFull() {
 }
 
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
-  rxLogSetSender(contact.name);   // name the rx_log row this advert just created
   if (_serial->isConnected()) {
     if (is_new) {
       writeContactRespFrame(PUSH_CODE_NEW_ADVERT, contact);
@@ -502,28 +501,47 @@ int MyMesh::getRecentlyHeard(AdvertPath dest[], int max_num) {
 }
 
 // Per-packet RX log. logRx() is the Dispatcher hook fired for every received packet (just
-// before it is decoded), so we record signal/type/hops here; the decode callbacks that run
-// immediately after for the SAME packet fill in the sender name via rxLogSetSender().
+// before it is decoded), so only the raw payload is available: the sender identity byte
+// is read straight off the wire layout per payload type (a MeshCore hash IS the first
+// byte of the pub key, so src hash == key[0]).
 void MyMesh::logRx(mesh::Packet* packet, int len, float score) {
   uint8_t idx = (rx_log_count == 0) ? 0 : (uint8_t)((rx_log_head + 1) % RX_LOG_SIZE);
   rx_log_head = idx;
   if (rx_log_count < RX_LOG_SIZE) rx_log_count++;
   RxLogEntry& e = rx_log[idx];
   e.timestamp = getRTCClock()->getCurrentTime();
-  e.name[0] = 0;
   e.ptype = packet->getPayloadType();
   e.rssi  = (int8_t)_radio->getLastRSSI();
   e.snr   = (int8_t)lroundf(packet->getSNR());
   e.hops  = packet->getPathHashCount();
   e.flood = packet->isRouteFlood() ? 1 : 0;
-}
-
-void MyMesh::rxLogSetSender(const char* name) {
-  if (rx_log_count == 0 || !name || !name[0]) return;
-  RxLogEntry& e = rx_log[rx_log_head];
-  if (e.name[0]) return;   // first resolver wins
-  strncpy(e.name, name, sizeof(e.name) - 1);
-  e.name[sizeof(e.name) - 1] = 0;
+  switch (e.ptype) {
+    case PAYLOAD_TYPE_ADVERT:      // payload = sender pub key (32) + ...
+    case PAYLOAD_TYPE_GRP_TXT:     // payload = channel hash (1) + ...
+    case PAYLOAD_TYPE_GRP_DATA:
+      e.key0 = (packet->payload_len >= 1) ? packet->payload[0] : -1;
+      break;
+    case PAYLOAD_TYPE_TXT_MSG:     // payload = dest hash (1) + src hash (1) + ...
+    case PAYLOAD_TYPE_REQ:
+    case PAYLOAD_TYPE_RESPONSE:
+    case PAYLOAD_TYPE_PATH:
+    case PAYLOAD_TYPE_ANON_REQ:    // payload = dest hash (1) + sender pub key (32) + ...
+      e.key0 = (packet->payload_len >= 2) ? packet->payload[1] : -1;
+      break;
+    default:                       // ACK/TRACE/CONTROL/...: no sender identity on the wire
+      e.key0 = -1;
+      break;
+  }
+  // Trailing path bytes: flood packets accumulate one hash per repeater, so the
+  // last byte is the node whose transmission we actually heard. TRACE re-uses the
+  // path field for per-hop SNRs (see Mesh.cpp), so it carries no relay hashes.
+  e.via_len = 0;
+  if (e.ptype != PAYLOAD_TYPE_TRACE) {
+    int pb = packet->getPathByteLen();
+    int n = pb < (int)sizeof(e.via) ? pb : (int)sizeof(e.via);
+    for (int i = 0; i < n; i++) e.via[i] = packet->path[pb - n + i];
+    e.via_len = n;
+  }
 }
 
 int MyMesh::getRxLog(RxLogEntry dest[], int max_num) {
@@ -665,21 +683,18 @@ void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pk
 
 void MyMesh::onMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const char *text) {
-  rxLogSetSender(from.name);
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_PLAIN, pkt, sender_timestamp, NULL, 0, text);
 }
 
 void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                const char *text) {
-  rxLogSetSender(from.name);
   markConnectionActive(from); // in case this is from a server, and we have a connection
   queueMessage(from, TXT_TYPE_CLI_DATA, pkt, sender_timestamp, NULL, 0, text);
 }
 
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
-  rxLogSetSender(from.name);
   markConnectionActive(from);
   // from.sync_since change needs to be persisted
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
@@ -729,7 +744,6 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   if (getChannel(channel_idx, channel_details)) {
     channel_name = channel_details.name;
   }
-  rxLogSetSender(channel_name);
   if (_ui) _ui->newMsg(path_len, channel_name, text, offline_queue_len);
 #endif
 }

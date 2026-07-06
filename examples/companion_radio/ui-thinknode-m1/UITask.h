@@ -70,6 +70,7 @@ class UITask : public AbstractUITask {
   UIScreen*            _revert_screen = NULL;
   int                  _revert_page = 0;
   unsigned long        _revert_at = 0;   // 0 = no pending auto-return
+  unsigned long        _cycle_repeat_at = 0;   // 0 = no held-cycle auto-repeat pending
 
   void userLedHandler();
   void playMsgSound(uint8_t path_len);   // play the configured notification sound

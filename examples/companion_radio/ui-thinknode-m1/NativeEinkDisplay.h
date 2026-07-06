@@ -15,6 +15,14 @@
   #define EINK_LIMIT_FASTREFRESH  10
 #endif
 
+// Idle time after the last refresh before the SSD1681 is put into deep sleep. Deferring
+// (instead of hibernating inside endFrame) keeps rapid interactions snappy: the ~150ms
+// power-off + ~100ms power-on round-trip is skipped while the user is actively clicking,
+// and the panel still spends essentially all of its life unbiased (the fading fix).
+#ifndef EINK_HIBERNATE_IDLE_MILLIS
+  #define EINK_HIBERNATE_IDLE_MILLIS  2000
+#endif
+
 // Native 200x200 renderer for the ThinkNode M1 e-ink: draws 1:1 in physical pixels
 // (no logical-128 upscaler, so chrome is crisp) and uses a packed GNU Unifont subset
 // for text (real Unicode/symbol glyphs instead of the `block` fallback). Lives in the
@@ -36,6 +44,8 @@ class NativeEinkDisplay : public DisplayDriver {
   uint32_t  last_display_crc_value = 0;
   bool      _clear_pending = false;  // do a ghost-clearing swing at the start of the next frame
   int       _partial_count = 0;      // partial refreshes since the last swing
+  bool      _hibernate_pending = false;   // deep-sleep the panel once idle (see pollHibernate)
+  uint32_t  _hibernate_at = 0;            // millis() deadline for the deferred hibernate
 
   void swingClear();   // cycle every pixel black->white to flush ghosting (crisp, no speckle)
   int  blitGlyph(uint32_t cp, int x, int y, int scale);   // returns advance width (px)
@@ -47,6 +57,7 @@ public:
     display(GxEPD2_154_D67(DISP_CS, DISP_DC, DISP_RST, DISP_BUSY, SPI1)) {}
 
   bool begin();
+  void pollHibernate();   // call from the app loop: deep-sleeps the panel once idle
 
   bool isOn() override { return _isOn; }
   bool isEink() override { return true; }

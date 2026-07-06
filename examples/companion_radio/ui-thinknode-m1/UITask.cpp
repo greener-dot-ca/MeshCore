@@ -15,6 +15,13 @@
   #define EINK_IDLE_REFRESH_MILLIS  60000   // 1 minute
 #endif
 
+// While the circle button stays held on a multi-option element, advance to the
+// next option this often. Must comfortably exceed one partial e-ink refresh
+// (~450ms) so each step is visible on the panel before the next one fires.
+#ifndef CYCLE_HOLD_REPEAT_MS
+  #define CYCLE_HOLD_REPEAT_MS  750
+#endif
+
 // Red "Power" LED battery heartbeat: brief blink every PERIOD while on battery.
 #ifndef RED_LED_PERIOD_MILLIS
   #define RED_LED_PERIOD_MILLIS  5000
@@ -31,6 +38,12 @@
 
 static int presetIndexForFreq(float mhz);   // defined below, near the off-grid helpers
 
+// Empty ISR: its only job is to make a button edge raise a GPIOTE interrupt, which
+// pops the CPU out of the event-wait sleep in the main loop (board.sleep). Without
+// it a press isn't a wake source and sits unnoticed until the next BLE/LoRa/timer
+// interrupt happens to wake the poller. No work in the ISR = no radio impact.
+static void btnWakeISR() {}
+
 void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs) {
   _display = display;
   _sensors = sensors;
@@ -38,8 +51,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
 #if defined(PIN_USER_BTN)
   user_btn.begin();
+  attachInterrupt(digitalPinToInterrupt(PIN_USER_BTN), btnWakeISR, CHANGE);
 #endif
   back_btn.begin();   // second button (PIN_BUTTON2)
+  attachInterrupt(digitalPinToInterrupt(PIN_BUTTON2), btnWakeISR, CHANGE);
 
   _node_prefs = node_prefs;
   // Seed the remembered off-grid band from the live freq (recovers the choice
@@ -72,6 +87,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   pages[PAGE_RXLOG]     = new RxLogScreen(this, node_prefs);
   pages[PAGE_RADIO]     = new RadioScreen(this, node_prefs);
   pages[PAGE_GPS]       = new GPSScreen(this, node_prefs);
+  pages[PAGE_NAV]       = new NavScreen(this, node_prefs);
   pages[PAGE_BLUETOOTH] = new BluetoothScreen(this, node_prefs);
   pages[PAGE_BUZZ]      = new BuzzScreen(this, node_prefs);
   pages[PAGE_TIME]      = new TimeScreen(this, node_prefs);
@@ -457,6 +473,10 @@ bool UITask::isButtonPressed() const {
 }
 
 void UITask::loop() {
+#ifdef USE_NATIVE_EINK_UI
+  display.pollHibernate();   // deep-sleep the panel once refreshes have gone idle
+#endif
+
   // Per the official M1 manual: circle = function/select, triangle = page turn. ev drives
   // the function/element logic, ev2 the page logic -- so circle feeds ev, triangle feeds ev2.
   int ev  = back_btn.check();    // circle  (back_btn / GPIO39) = function / select
@@ -479,11 +499,11 @@ void UITask::loop() {
       if (!wakeIfOff()) revertFromPopup();
     }
   } else if (curr == _detail) {
-    // ---- read view ----
-    //   circle    click       = page down body, then on to the next (older) message
-    //   circle    hold        = previous (newer) message  (CLI rescue in first 8s)
-    //   triangle  hold        = back to the message list (keeps the drill context)
-    //   triangle  double      = Home
+    // ---- read view ---- (click + hold only)
+    //   circle    click = page down body, then on to the next (older) message
+    //   circle    hold  = previous (newer) message  (CLI rescue in first 8s)
+    //   triangle  click = back to the message list (keeps the drill context)
+    //   triangle  hold  = Home
     if (ev == BUTTON_EVENT_LONG_PRESS && millis() - ui_started_at < 8000) {
       the_mesh.enterCLIRescue();
     } else if (ev == BUTTON_EVENT_LONG_PRESS) {
@@ -491,36 +511,35 @@ void UITask::loop() {
     } else if (ev != BUTTON_EVENT_NONE) {
       if (!wakeIfOff() && !_detail->scrollDown()) navMessage(+1);
     }
-    if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
-      if (!wakeIfOff()) gotoHomeScreen();
-    } else if (ev2 == BUTTON_EVENT_TRIPLE_CLICK) {
-      if (!wakeIfOff()) showHelp();
-    } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
+    if (ev2 == BUTTON_EVENT_CLICK) {
       // return to the message list WITHOUT resetFocus so the drill context
       // (selected conversation/node) is preserved
       if (!wakeIfOff()) { curr_page = PAGE_MESSAGES; setCurrScreen(_messages); }
+    } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
+      if (!wakeIfOff()) gotoHomeScreen();
     }
   } else {
     // ---- circle button (back_btn / GPIO39): ELEMENT / function navigation ----
-    //   click        = next element (down)
-    //   long press   = previous element (up)   (or CLI rescue in first 8s)
-    //   double-click = activate / select focused element
+    //   click = next element (wraps around)
+    //   hold  = activate / select focused element   (or CLI rescue in first 8s);
+    //           on a multi-option element, keeping it held steps through the
+    //           options at CYCLE_HOLD_REPEAT_MS
     if (ev == BUTTON_EVENT_CLICK) {
       if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->focusNext();
     } else if (ev == BUTTON_EVENT_LONG_PRESS) {
       if (millis() - ui_started_at < 8000) {   // rescue window after boot
         the_mesh.enterCLIRescue();
       } else if (!wakeIfOff() && onPage()) {
-        ((ElementScreen*)curr)->focusPrev();
+        ((ElementScreen*)curr)->activateFocused();
+        if (((ElementScreen*)curr)->focusedIsCycle()) {
+          _cycle_repeat_at = millis() + CYCLE_HOLD_REPEAT_MS;   // keep stepping while held
+        }
       }
-    } else if (ev == BUTTON_EVENT_DOUBLE_CLICK) {
-      if (!wakeIfOff() && onPage()) ((ElementScreen*)curr)->activateFocused();
     }
 
     // ---- triangle button (user_btn / GPIO42): PAGE navigation ----
-    //   click        = next page
-    //   long press   = previous page (back), or pop up one Messages drill level
-    //   double-click = go to home page
+    //   click = next page (wraps around)
+    //   hold  = previous page (back), or pop up one Messages drill level
     if (ev2 == BUTTON_EVENT_CLICK) {
       if (!wakeIfOff() && onPage()) nextPage();
     } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
@@ -528,10 +547,20 @@ void UITask::loop() {
         if (curr == _messages && !_messages->atTopLevel()) _messages->goBack();
         else prevPage();
       }
-    } else if (ev2 == BUTTON_EVENT_DOUBLE_CLICK) {
-      if (!wakeIfOff() && onPage()) gotoHomeScreen();
-    } else if (ev2 == BUTTON_EVENT_TRIPLE_CLICK) {
-      if (!wakeIfOff() && onPage()) showHelp();
+    }
+  }
+
+  // Auto-repeat: while the circle button stays held on a multi-option element,
+  // step to the next option every CYCLE_HOLD_REPEAT_MS. Cancelled the moment the
+  // button is released, focus moves, or we leave the page.
+  if (_cycle_repeat_at != 0) {
+    if (!back_btn.isPressed() || !onPage() || !((ElementScreen*)curr)->focusedIsCycle()) {
+      _cycle_repeat_at = 0;
+    } else if (millis() >= _cycle_repeat_at) {
+      ((ElementScreen*)curr)->activateFocused();
+      _cycle_repeat_at = millis() + CYCLE_HOLD_REPEAT_MS;
+      _auto_off = millis() + AUTO_OFF_MILLIS;
+      _next_refresh = 0;   // repaint so each step is visible
     }
   }
 

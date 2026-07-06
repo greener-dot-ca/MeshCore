@@ -77,6 +77,8 @@ bool NativeEinkDisplay::begin() {
   display.fillScreen(GxEPD_WHITE);
   display.display(true);
   _partial_count = 0;
+  _hibernate_pending = true;   // panel powered after any refresh; sleep it once idle
+  _hibernate_at = millis() + EINK_HIBERNATE_IDLE_MILLIS;
 #if defined(DISP_BACKLIGHT)
   digitalWrite(DISP_BACKLIGHT, LOW);
   pinMode(DISP_BACKLIGHT, OUTPUT);
@@ -97,6 +99,12 @@ void NativeEinkDisplay::turnOff() {
 #if defined(DISP_BACKLIGHT) && !defined(BACKLIGHT_BTN)
   digitalWrite(DISP_BACKLIGHT, LOW);
 #endif
+  // Screen going dark (auto-off or shutdown): don't wait out the idle deferral --
+  // deep-sleep the panel now so it never sits biased across standby/SYSTEM OFF.
+  if (_hibernate_pending) {
+    display.hibernate();
+    _hibernate_pending = false;
+  }
   _isOn = false;
 }
 
@@ -204,6 +212,7 @@ void NativeEinkDisplay::swingClear() {
   display.display(true);          // whole screen -> black
   display.fillScreen(GxEPD_WHITE);
   display.display(true);          // whole screen -> white
+  // No hibernate here: startFrame's endFrame follows immediately and repaints.
 }
 
 // Request a ghost-clearing swing before the next painted frame.
@@ -216,6 +225,23 @@ void NativeEinkDisplay::endFrame() {
   uint32_t crc = display_crc.finalize();
   if (crc == last_display_crc_value) return;    // unchanged -- skip the refresh
   display.display(true);                        // crisp partial (fast) refresh
+  // Schedule a deep sleep rather than hibernating here: the fork's partial update
+  // (0x22=0xFC) leaves the analog rails + VCOM energized, and that continuous DC
+  // bias is what fades the image (and drains the battery) -- but the power-off/on
+  // round-trip costs ~250ms, so during active interaction we keep the panel powered
+  // and only drop into deep sleep once refreshes stop (see pollHibernate).
+  _hibernate_pending = true;
+  _hibernate_at = millis() + EINK_HIBERNATE_IDLE_MILLIS;
   _partial_count++;
   last_display_crc_value = crc;
+}
+
+// Called every app-loop pass. Deep sleep mode 1 retains controller RAM, so the
+// differential partials still work on wake; the fork auto-resets/re-inits on the
+// next refresh.
+void NativeEinkDisplay::pollHibernate() {
+  if (_hibernate_pending && (int32_t)(millis() - _hibernate_at) >= 0) {
+    display.hibernate();
+    _hibernate_pending = false;
+  }
 }

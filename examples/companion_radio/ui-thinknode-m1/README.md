@@ -11,16 +11,17 @@ available as a `*_legacy` build — see [Building](#building).
 
 - **200×200 native e-ink rendering** — crisp, true-resolution text and chrome (no upscaling).
 - **Real Unicode text, symbols & icons** via a built-in GNU Unifont subset.
-- **Two-button navigation** — circle scrolls/selects, triangle pages and is a universal back; triple-click triangle for Help.
+- **Two-button navigation, click + hold only** — circle scrolls (click) and selects (hold), triangle pages (click) and backs out (hold); Help lives on the Home page.
 - **Status bar** — app-linked, GPS, muted, Bluetooth-off, charging, battery and clock indicators.
 - **No-flicker e-ink** — repaints only when something actually changed, never on a timer.
 - **Pages:**
-  - **Home** — node name, Buzzer/Bluetooth/GPS toggles, App/Unread/Uptime.
+  - **Home** — node name, Send Advert, unread count, uptime, queue, Help.
   - **Messages** — unread-by-app queue grouped into conversations, with a drill-down word-wrapped read view.
   - **Mesh** — `Send Advert` action + traffic stats (contacts, sent/recv, airtime, queue).
-  - **RX Log** — live per-packet receive log: type (ADV/MSG/CHAN/ACK/…), signal (RSSI/SNR), sender/channel name when known, and reception time.
+  - **RX Log** — live per-packet receive log: type (AD/MS/CH/AK/…), signal (RSSI/SNR), the relay path bytes it came through, and age, in aligned columns.
   - **Radio** — off-grid (client-repeat) toggle, 433/869/918 MHz preset, LoRa params + live RSSI/SNR/noise.
   - **GPS** — toggle + last-good-fix position/sats/altitude.
+  - **Nav** — glyph compass: cycle through favourite nodes as waypoints, see distance + true bearing on a north-up rose.
   - **Bluetooth** — toggle + pairing pin.
   - **Buzz** — buzzer on/off + notification sound (CTU / Beep / Morse).
   - **Time** — 12/24h format + UTC offset.
@@ -61,20 +62,24 @@ Compared with the previous M1 firmware (the `ui-new` build, now
 Two physical buttons, named after the symbols on the case: the **triangle**
 button and the **circle** button.
 
-| Button       | Click               | Long press (hold)       | Double click             |
-|--------------|---------------------|-------------------------|--------------------------|
-| **Circle**   | next item (down)    | previous item (up)¹     | select / open the item   |
-| **Triangle** | next page           | previous page / back²   | jump to Home page        |
+Only two gestures exist — **click** and **hold** (~0.5 s) — so every click acts
+the instant the button is released (no double-click wait).
 
-Triple-click the triangle button on any page to pop up the **Help** overlay (icon
-legend + this button guide); any press dismisses it.
+| Button       | Click               | Long press (hold)       |
+|--------------|---------------------|-------------------------|
+| **Circle**   | next item (wraps)   | select / open the item¹ |
+| **Triangle** | next page (wraps)   | previous page / back²   |
+
+The **Help** overlay (icon legend + this button guide) is an item on the Home
+page; any press dismisses it. Item and page navigation both wrap around, which
+stands in for the old "previous item" gesture.
 
 ¹ In the first 8 s after boot, holding the circle button instead enters CLI rescue.
 
 ² **Hold the triangle button is always "back".** On a normal page it steps to the
 previous page. Inside Messages it pops up one level (message list →
-conversations) before resuming page navigation. In the read view it returns to
-the message list.
+conversations) before resuming page navigation. In the read view, *clicking*
+the triangle returns to the message list and holding it jumps to Home.
 
 Any button press while the display is asleep only wakes it.
 
@@ -85,15 +90,21 @@ at the bottom (one dot per page, the current one larger). When a page is taller
 than the screen, a **scrollbar** and up/down **more-arrows** appear on the right;
 selection moves item-to-item and the view follows it.
 
-1. **Home** — node name, then `Buzzer` / `Bluetooth` / `GPS` toggles, then `App`
-   (connected?), `Unread` count, `Uptime`.
+1. **Home** — node name, `Send Advert` action, `Messages` unread count,
+   `Uptime`, `Queue`, and `Help` (the overlay with the icon legend + button guide).
 2. **Messages** — the unread messages (see below).
 3. **Mesh** — `Send Advert` action, then traffic stats: `Contacts`, `Sent F/D`,
    `Recv F/D`, `Airtime`, `Queue`.
-4. **RX Log** — live per-packet receive log (newest first): packet type
-   (`ADV`/`MSG`/`CHAN`/`ACK`/`PATH`/…), signal (`-rssi/+snr`), and the sender or
-   channel name when the decode resolves one (otherwise `?`), with the reception
-   clock time right-aligned. Scrolls; rebuilt from the in-RAM `rx_log` ring.
+4. **RX Log** — live per-packet receive log (newest first), in fixed columns:
+   2-char packet type (`AD`vert / `MS`g / `CH`annel / `AK` ack / `PA`th / `TR`ace
+   / `RQ`,`RS` req/resp / `AR` anon-req / `GD`,`CT`,`MP`,`RW`), signal
+   (`-rssi/+snr`), the **via** column — the newest relay hashes this copy
+   travelled through, one hex byte per hop, rightmost = the node we actually
+   heard (last 2 shown; the hop count column carries the full total) — and the
+   hop count (`2h`). Direct from the origin, via shows the origin's key byte /
+   channel hash; `--` when the type carries no identity (direct ACK, TRACE).
+   Age (`now`/`5m`/`3h`) right-aligned. Scrolls; rebuilt from the in-RAM
+   `rx_log` ring.
 5. **Radio** — RF config + link. The `Off-grid` (client-repeat) toggle and the
    `Off grid freq` preset (`433`/`869`/`918` MHz) are the editable controls; then
    the tuned LoRa params `Freq` (MHz), `BW` (kHz), `SF`, `CR`, `TX` (read-only,
@@ -101,10 +112,18 @@ selection moves item-to-item and the view follows it.
 6. **GPS** — `GPS` toggle, then `Fix` (live?), `Last` (age of last good fix),
    `Sats`, `Pos` (lat,lon), `Alt`. Position/sats/alt show the *last good fix* so
    the page stays useful after losing signal or switching GPS off.
-7. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
-8. **Buzz** — `Buzzer` toggle and notification `Sound` (CTU / Beep / Morse).
-9. **Time** — clock `Format` (12/24h) and `UTC +/-` offset.
-10. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
+7. **Nav** — compass/waypoint page. `Target` cycles through the **favourite**
+   contacts (starred in the phone app) whose adverts carried a location;
+   `Dist` and `Brg` show great-circle distance and
+   true bearing from our last good GPS fix. Below, a compass rose built purely
+   from font glyphs: `N`/`S`/`W`/`E` around an arrow (`↑↗→↘↓↙←↖`) pointing
+   at the target's bearing. North-up (the M1 has no magnetometer) — hold the
+   device like a map. Shows `?` / `--` without a fix or a located favourite.
+   Holding select on the `Target` row steps through the waypoints (~¾ s apart).
+8. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
+9. **Buzz** — `Buzzer` toggle and notification `Sound` (CTU / Beep / Morse).
+10. **Time** — clock `Format` (12/24h) and `UTC +/-` offset.
+11. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
 
 A boot **Splash** screen (logo + version + build date) shows for ~3 s first.
 
@@ -112,7 +131,7 @@ A boot **Splash** screen (logo + version + build date) shows for ~3 s first.
 
 A live view of the offline **"unread-by-app" queue** — messages received over the
 mesh that the companion phone app hasn't pulled yet — organized in two levels
-(circle double-click descends, hold triangle goes back up):
+(circle hold descends, triangle hold goes back up):
 
 - **Conversations** — one row per channel *and* per direct contact, with a
   message count and the last message's relative time (`#general (5)`,
@@ -120,7 +139,7 @@ mesh that the companion phone app hasn't pulled yet — organized in two levels
 - **Messages** — every message in the chosen conversation, newest first. Channel
   rows show the sender (`Alice: hey all`); direct rows show just the text.
   Selecting one opens a full-screen, word-wrapped **read view** (top line is the
-  `#channel sender` breadcrumb; circle pages down long messages, hold triangle
+  `#channel sender` breadcrumb; circle pages down long messages, triangle click
   returns to the list).
 
 This queue is the *only* on-device message store: there's no manual dismiss and
@@ -129,8 +148,7 @@ clear once the phone app pulls them — most useful when running the device
 standalone, where the queue acts as a rolling buffer. Empty state shows
 "No messages".
 
-The status-bar icons are explained in the in-device Help overlay (triple-click
-triangle).
+The status-bar icons are explained in the in-device Help overlay (Home ▸ Help).
 
 ---
 
@@ -142,7 +160,7 @@ lives entirely in this directory.
 
 ### Design goals
 
-- **Two buttons, no chords beyond click/long/double.** No touch, no encoder.
+- **Two buttons, click + hold only.** No touch, no encoder, no double-click waits.
 - **e-ink friendly.** The panel does a slow full refresh and CRC-gates redraws,
   so the UI only repaints in response to a real interaction — never on a timer.
   No animation, no "Ns ago" ticking in a draw path, no per-frame-changing pixels.

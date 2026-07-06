@@ -72,5 +72,10 @@ public:
   void focusNext();         // advance focus to next selectable (wraps)
   void focusPrev();         // move focus to previous selectable (wraps)
   void activateFocused();   // activate the focused element
+  // true when the focused element is a multi-option cycle (safe to auto-repeat
+  // while the select button is held; Actions/Toggles must never auto-repeat)
+  bool focusedIsCycle() const {
+    return _focus >= 0 && _focus < _count && _elems[_focus].kind == ElemKind::OptionCycle;
+  }
   void setFocusVisible(bool v) { _show_focus = v; }   // hide selection bar while sleeping
 };

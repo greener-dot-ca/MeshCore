@@ -14,6 +14,7 @@ enum {
   PAGE_RXLOG,
   PAGE_RADIO,
   PAGE_GPS,
+  PAGE_NAV,
   PAGE_BLUETOOTH,
   PAGE_BUZZ,
   PAGE_TIME,
@@ -70,6 +71,25 @@ protected:
   int pageCount() const override { return PAGE_COUNT; }
 public:
   GPSScreen(UITask* task, NodePrefs* prefs);
+};
+
+// Compass / waypoint page ("Nav"). Favourite contacts (starred in the app) that
+// advertised a location are the waypoints; shows great-circle distance + true
+// bearing from our GPS fix, plus a north-up compass rose built entirely from font
+// glyphs (the M1 has no magnetometer, so N is always up -- orient the device like
+// a map). Distance/bearing use the same haversine math as Meshtastic's GeoCoord.
+class NavScreen : public ElementScreen {
+  UIElement _items[3];
+  int _target = 0;    // index among the favourite contacts that have a location
+protected:
+  int pageIndex() const override { return PAGE_NAV; }
+  int pageCount() const override { return PAGE_COUNT; }
+public:
+  NavScreen(UITask* task, NodePrefs* prefs);
+  int render(DisplayDriver& display) override;         // base rows + the compass rose
+  const char* targetName();                            // current waypoint name ("--" if none)
+  void nextTarget();                                   // cycle to the next located contact
+  bool targetVector(double& dist_m, double& brg_deg);  // false if no fix or no waypoint
 };
 
 class BluetoothScreen : public ElementScreen {
@@ -173,14 +193,15 @@ public:
 };
 
 // Live RX log: every packet the radio decodes, newest first, each row showing the
-// packet type, signal (RSSI/SNR), hop count and -- when the decode resolves one -- the
-// sender/channel name. Rebuilt every render from MyMesh's rx_log ring (the source of
-// truth); rows scroll but don't drill down. Clock time ("14:02") is right-aligned.
+// packet type, signal (RSSI/SNR), and the relay path bytes it travelled (rightmost
+// = the node we actually heard; origin key byte when direct; "--" if the type has
+// no identity). Rebuilt every render from MyMesh's rx_log ring (the source of
+// truth); rows scroll but don't drill down. Age ("5m") is right-aligned.
 class RxLogScreen : public ElementScreen {
 public:
   struct RxRef { RxLogScreen* scr; int idx; };
 private:
-  struct Row { char line[40]; char time[8]; };   // "TYPE -rssi/+snr name" + HH:MM
+  struct Row { char line[40]; char time[8]; };   // "TY -rss/+sn C7F2 2h" + age
   UIElement  _items[RX_LOG_SIZE + 1];             // +1 for the empty-state label
   RxRef      _refs[RX_LOG_SIZE];
   Row        _rows[RX_LOG_SIZE];
@@ -190,7 +211,7 @@ protected:
   int pageCount() const override { return PAGE_COUNT; }
 public:
   RxLogScreen(UITask* task, NodePrefs* prefs);
-  const char* timeAt(int i) const { return _rows[i].time; }   // right-aligned HH:MM
+  const char* timeAt(int i) const { return _rows[i].time; }   // right-aligned age ("5m")
 };
 
 // Pop-up help overlay (not a carousel page -- shown like the message read view):

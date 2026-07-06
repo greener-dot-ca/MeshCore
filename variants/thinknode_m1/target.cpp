@@ -16,8 +16,11 @@ ThinkNodeM1SensorManager sensors = ThinkNodeM1SensorManager(nmea);
 
 #ifdef DISPLAY_CLASS
   DISPLAY_CLASS display;
-  MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
-  MomentaryButton back_btn(PIN_BUTTON2, 1000, true, true);   // pin 39, active-low, internal pull-up
+  // 500ms long-press, multi-click detection OFF: the ui-thinknode-m1 gesture set is
+  // click + hold only, so clicks fire the instant the button is released (no 280ms
+  // double-click disambiguation window).
+  MomentaryButton user_btn(PIN_USER_BTN, 500, true, false, false);
+  MomentaryButton back_btn(PIN_BUTTON2, 500, true, true, false);   // pin 39, active-low, internal pull-up
 #endif
 
 bool radio_init() {

@@ -5,6 +5,7 @@
 #include "icons.h"
 #include <Arduino.h>
 #include <string.h>
+#include <math.h>     // great-circle math for the Nav page
 #include <RTClib.h>   // DateTime for the message read-view timestamp
 
 #ifndef BATT_MIN_MILLIVOLTS
@@ -187,7 +188,7 @@ static void utcHalfToggle(const UIElement& e) {          // flip the 30-min part
   T(e)->setUtcOffsetMin((int16_t)(sign * mag));
 }
 static void advertCb(const UIElement& e)    { T(e)->doAdvert(); }
-static void fullRefreshCb(const UIElement& e) { T(e)->forceFullRefresh(); }
+static void helpCb(const UIElement& e)      { T(e)->showHelp(); }
 static bool offGridGet(const UIElement& e)    { return T(e)->getOffGrid(); }
 static void offGridToggle(const UIElement& e) { T(e)->toggleOffGrid(); }
 static const char* const freqOpts[] = { "433", "869", "918" };
@@ -228,28 +229,29 @@ static void convActivate(const UIElement& e) {  // drill into a conversation
 }
 
 // ----- RX log row callbacks + payload-type label -----
-static const char* rxRowTime(const UIElement& e) {    // right-aligned HH:MM
+static const char* rxRowTime(const UIElement& e) {    // right-aligned age ("5m")
   RxLogScreen::RxRef* r = (RxLogScreen::RxRef*)e.ctx;
   return r->scr->timeAt(r->idx);
 }
 static void rxRowNoop(const UIElement&) {}            // rows scroll but don't drill down
 
+// Fixed 2-char type codes so the log renders as aligned columns (Unifont is monospace).
 static const char* rxTypeLabel(uint8_t ptype) {
   switch (ptype) {
-    case PAYLOAD_TYPE_ADVERT:    return "ADV";
-    case PAYLOAD_TYPE_TXT_MSG:   return "MSG";
-    case PAYLOAD_TYPE_GRP_TXT:   return "CHAN";
-    case PAYLOAD_TYPE_ACK:       return "ACK";
-    case PAYLOAD_TYPE_PATH:      return "PATH";
-    case PAYLOAD_TYPE_TRACE:     return "TRACE";
-    case PAYLOAD_TYPE_REQ:       return "REQ";
-    case PAYLOAD_TYPE_RESPONSE:  return "RESP";
-    case PAYLOAD_TYPE_ANON_REQ:  return "AREQ";
-    case PAYLOAD_TYPE_GRP_DATA:  return "GDAT";
-    case PAYLOAD_TYPE_CONTROL:   return "CTRL";
-    case PAYLOAD_TYPE_MULTIPART: return "MPRT";
-    case PAYLOAD_TYPE_RAW_CUSTOM:return "RAW";
-    default:                     return "?";
+    case PAYLOAD_TYPE_ADVERT:    return "AD";
+    case PAYLOAD_TYPE_TXT_MSG:   return "MS";
+    case PAYLOAD_TYPE_GRP_TXT:   return "CH";
+    case PAYLOAD_TYPE_ACK:       return "AK";
+    case PAYLOAD_TYPE_PATH:      return "PA";
+    case PAYLOAD_TYPE_TRACE:     return "TR";
+    case PAYLOAD_TYPE_REQ:       return "RQ";
+    case PAYLOAD_TYPE_RESPONSE:  return "RS";
+    case PAYLOAD_TYPE_ANON_REQ:  return "AR";
+    case PAYLOAD_TYPE_GRP_DATA:  return "GD";
+    case PAYLOAD_TYPE_CONTROL:   return "CT";
+    case PAYLOAD_TYPE_MULTIPART: return "MP";
+    case PAYLOAD_TYPE_RAW_CUSTOM:return "RW";
+    default:                     return "??";
   }
 }
 
@@ -305,7 +307,7 @@ HomeScreen::HomeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, pre
   _items[2] = makeLabel("Messages", unreadText, task);
   _items[3] = makeLabel("Uptime",   uptimeText,  task);
   _items[4] = makeLabel("Queue",    queueText,   task);
-  _items[5] = makeAction("Full Refresh", task, fullRefreshCb);    // clear e-ink ghosting
+  _items[5] = makeAction("Help", task, helpCb);   // gesture + icon legend
   _elems = _items; _count = 6;     // BT/conn now shown as a status-bar icon
 }
 
@@ -348,6 +350,133 @@ GPSScreen::GPSScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs
   _items[4] = makeLabel("Pos",   gpsLatLonText,  task);
   _items[5] = makeLabel("Alt",   gpsAltText,     task);
   _elems = _items; _count = 6;
+}
+
+// ============================================================ NavScreen
+// Favourite contacts (starred in the app: flags bit 0) that advertised a location
+// are the waypoints (MeshCore has no separate waypoint protocol). gps_lat/lon are
+// millionths of a degree.
+
+static bool isWaypoint(const ContactInfo& ci) {
+  return (ci.flags & 0x01) && !(ci.gps_lat == 0 && ci.gps_lon == 0);
+}
+static bool nthWaypoint(int n, ContactInfo& out) {
+  int num = the_mesh.getNumContacts();
+  for (int i = 0; i < num; i++) {
+    if (!the_mesh.getContactByIdx(i, out)) continue;
+    if (!isWaypoint(out)) continue;
+    if (n-- == 0) return true;
+  }
+  return false;
+}
+static int numWaypoints() {
+  ContactInfo ci;
+  int num = the_mesh.getNumContacts(), n = 0;
+  for (int i = 0; i < num; i++) {
+    if (the_mesh.getContactByIdx(i, ci) && isWaypoint(ci)) n++;
+  }
+  return n;
+}
+
+// Haversine distance + initial true bearing -- the same great-circle formulas
+// Meshtastic's GeoCoord uses (R = 6371 km).
+static void greatCircle(double lat1, double lon1, double lat2, double lon2,
+                        double& dist_m, double& brg_deg) {
+  const double D2R = 0.017453292519943295;
+  double p1 = lat1 * D2R, p2 = lat2 * D2R, dl = (lon2 - lon1) * D2R;
+  double sa = sin((p2 - p1) / 2), so = sin(dl / 2);
+  double h = sa * sa + cos(p1) * cos(p2) * so * so;
+  dist_m = 2.0 * 6371000.0 * asin(sqrt(h));
+  double y = sin(dl) * cos(p2);
+  double x = cos(p1) * sin(p2) - sin(p1) * cos(p2) * cos(dl);
+  brg_deg = fmod(atan2(y, x) / D2R + 360.0, 360.0);
+}
+
+static NavScreen* NV(const UIElement& e) { return (NavScreen*)e.ctx; }
+static const char* navTargetText(const UIElement& e) { return NV(e)->targetName(); }
+static void navNextCb(const UIElement& e) { NV(e)->nextTarget(); }
+
+static const char* navDistText(const UIElement& e) {
+  static char b[14];
+  double d, brg;
+  if (!NV(e)->targetVector(d, brg)) { strcpy(b, "--"); return b; }
+  if (d < 1000)        sprintf(b, "%dm", (int)(d + 0.5));
+  else if (d < 10000)  sprintf(b, "%.2fkm", d / 1000.0);
+  else if (d < 100000) sprintf(b, "%.1fkm", d / 1000.0);
+  else                 sprintf(b, "%.0fkm", d / 1000.0);
+  return b;
+}
+static const char* navBrgText(const UIElement& e) {
+  static char b[12];
+  double d, brg;
+  if (!NV(e)->targetVector(d, brg)) { strcpy(b, "--"); return b; }
+  static const char* const pts[8] = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+  sprintf(b, "%d\xC2\xB0 %s", (int)(brg + 0.5) % 360, pts[((int)(brg / 45.0 + 0.5)) % 8]);
+  return b;
+}
+
+const char* NavScreen::targetName() {
+  static char b[26];
+  ContactInfo ci;
+  int n = numWaypoints();
+  if (n == 0) { strcpy(b, "--"); return b; }
+  if (_target >= n) _target %= n;   // contact list shrank since last render
+  nthWaypoint(_target, ci);
+  strncpy(b, ci.name, sizeof(b) - 1);
+  b[sizeof(b) - 1] = 0;
+  return b;
+}
+
+void NavScreen::nextTarget() {
+  int n = numWaypoints();
+  if (n > 0) _target = (_target + 1) % n;
+}
+
+bool NavScreen::targetVector(double& dist_m, double& brg_deg) {
+  if (!gpsEverFixed()) return false;      // navigate from the last good fix
+  ContactInfo ci;
+  int n = numWaypoints();
+  if (n == 0) return false;
+  if (_target >= n) _target %= n;
+  if (!nthWaypoint(_target, ci)) return false;
+  greatCircle(sensors.node_lat, sensors.node_lon,
+              ci.gps_lat / 1.0e6, ci.gps_lon / 1.0e6, dist_m, brg_deg);
+  return true;
+}
+
+NavScreen::NavScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Nav") {
+  _items[0] = makeCycleText("Target", this, navTargetText, navNextCb);
+  _items[1] = makeLabel("Dist", navDistText, this);
+  _items[2] = makeLabel("Brg",  navBrgText,  this);
+  _elems = _items; _count = 3;
+}
+
+int NavScreen::render(DisplayDriver& d) {
+  int ret = ElementScreen::render(d);   // status bar, rows, page dots
+
+  // North-up compass rose in the band under the rows, all font glyphs at the
+  // page's regular 16px size: cardinal letters around an arrow pointing at the
+  // target's true bearing (8 sectors). "?" when there's no GPS fix or waypoint.
+  static const char* const arrows[8] = {
+    "\xE2\x86\x91", "\xE2\x86\x97", "\xE2\x86\x92", "\xE2\x86\x98",   // ↑ ↗ → ↘
+    "\xE2\x86\x93", "\xE2\x86\x99", "\xE2\x86\x90", "\xE2\x86\x96"    // ↓ ↙ ← ↖
+  };
+  double dist, brg;
+  bool have = targetVector(dist, brg);
+  const char* mark = have ? arrows[((int)(brg / 45.0 + 0.5)) % 8] : "?";
+
+  const int cx = d.width() / 2;
+  const int rows_end = contentTop() + 3 * (UIELEM_ROW_H + 2 * UIELEM_PAD);
+  const int cy = (rows_end + contentBottom()) / 2;   // center of the free band
+
+  d.setColor(DisplayDriver::LIGHT);
+  d.setTextSize(1);
+  d.drawTextCentered(cx, cy - 8, mark);              // arrow, same 16px as the rows
+  d.drawTextCentered(cx, cy - 26, "N");
+  d.drawTextCentered(cx, cy + 10, "S");
+  d.drawTextCentered(cx - 26, cy - 8, "W");
+  d.drawTextCentered(cx + 26, cy - 8, "E");
+  return ret;
 }
 
 // ============================================================ BluetoothScreen
@@ -644,16 +773,16 @@ int HelpScreen::render(DisplayDriver& d) {
     y += 18;
   }
 
-  // ---- two buttons: ● moves/selects within a screen, ▲ navigates pages + always backs out ----
+  // ---- two buttons, click + hold only: ● moves/selects, ▲ pages/backs out ----
   d.fillRect(0, y, d.width(), 1);                             // separator
   y += 5;
   d.setCursor(2, y);       d.print("\xE2\x97\x8F");           // ● (circle = function/select)
-  d.setCursor(22, y);      d.print("click next  hold prev");
-  d.setCursor(22, y + 18); d.print("2x: select / open");
+  d.setCursor(22, y);      d.print("click: next item");
+  d.setCursor(22, y + 18); d.print("hold: select / open");
   y += 40;
   d.setCursor(2, y);       d.print("\xE2\x96\xB2");           // ▲ (triangle = page)
-  d.setCursor(22, y);      d.print("click page  hold BACK");
-  d.setCursor(22, y + 18); d.print("2x home  3x help");
+  d.setCursor(22, y);      d.print("click: next page");
+  d.setCursor(22, y + 18); d.print("hold: back / prev");
 
   return 3600000;   // static: only repaints on interaction (which dismisses it)
 }
@@ -687,18 +816,35 @@ RxLogScreen::RxLogScreen(UITask* task, NodePrefs* prefs)
   _elems = _items; _count = 0;
 }
 
-// Rebuilt every render from MyMesh's rx_log ring (newest first). Each row:
-// "<TYPE> <rssi>/<+snr> <name>" with the reception clock time right-aligned.
+// Rebuilt every render from MyMesh's rx_log ring (newest first). Each row is a set
+// of fixed-width columns (Unifont is monospace, so printf padding lines them up):
+// "TY -rss/+sn VIA  Hh" with the relative age right-aligned (re-rendered each
+// refresh, so the ages stay current). VIA = the newest relay hashes this copy
+// travelled through (rightmost byte = the node we actually heard); the hops
+// column carries the full count, so older relays are simply cut. Direct from the
+// origin: the origin's key byte / channel hash. "--" when the type carries no
+// identity at all (direct ACK etc). Rows are 19 chars max beside the age column,
+// so via gets 2 bytes -- 1 if the hop count ever needs two digits.
 void RxLogScreen::rebuild() {
   static RxLogEntry rx[RX_LOG_SIZE];                   // transient scratch (single-threaded)
   int got = the_mesh.getRxLog(rx, RX_LOG_SIZE);
   int n = 0;
   for (int i = 0; i < got; i++) {
     const RxLogEntry& e = rx[i];
-    snprintf(_rows[n].line, sizeof(_rows[n].line), "%s %d/%+d %s",
-             rxTypeLabel(e.ptype), (int)e.rssi, (int)e.snr, e.name[0] ? e.name : "?");
-    if (e.timestamp) uiFormatClock(_prefs, e.timestamp, _rows[n].time, sizeof(_rows[n].time));
-    else             _rows[n].time[0] = 0;
+    int max_b = (e.hops > 9) ? 1 : 2;
+    int nb = (e.via_len < max_b) ? e.via_len : max_b;
+    char via[6];
+    if (nb > 0) {
+      char* p = via;
+      for (int k = e.via_len - nb; k < e.via_len; k++) p += sprintf(p, "%02X", e.via[k]);
+    } else if (e.key0 >= 0) {
+      sprintf(via, "%02X", (unsigned)e.key0);   // straight from the origin
+    } else {
+      strcpy(via, "--");
+    }
+    snprintf(_rows[n].line, sizeof(_rows[n].line), "%s %4d/%+3d %-4s %uh",
+             rxTypeLabel(e.ptype), (int)e.rssi, (int)e.snr, via, (unsigned)e.hops);
+    relTime(_rows[n].time, sizeof(_rows[n].time), e.timestamp);
     _refs[n].scr = this; _refs[n].idx = n;
     _items[n] = makeMessageRow(_rows[n].line, &_refs[n], rxRowTime, rxRowNoop);
     n++;

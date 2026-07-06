@@ -90,22 +90,21 @@ static int drawSymRight(DisplayDriver& d, int right, int y, const char* sym) {
 }
 
 void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const {
-  // selection = a left ">" marker drawn in a reserved left gutter. Reverse-video filled
-  // the whole row solid, and this panel's fast-partial waveform streaked badly on that
-  // large solid area; a small marker paints/erases only a few pixels as focus moves, so
-  // there is essentially nothing to ghost.
-  static const char NAV_MARK[] = ">";
-  const DisplayDriver::Color fg = DisplayDriver::LIGHT;
+  // Selection = full-row reverse video (solid black bar, white text) -- first-gen
+  // iPod style. An earlier build used a small '>' gutter marker instead because a
+  // solid bar streaked on the fast-partial waveform; retrying the bar now that the
+  // panel gets a periodic ghost-clearing swing + idle deep sleep. The gutter indent
+  // is kept so text doesn't shift when focus moves onto a row.
+  const DisplayDriver::Color fg = focused ? DisplayDriver::DARK : DisplayDriver::LIGHT;
   const int ty = y + UIELEM_PAD;
   d.setTextSize(1);
-  const int navw = d.getTextWidth(NAV_MARK);
+  const int navw = d.getTextWidth(">");   // gutter width (kept for alignment)
   if (focused) {
-    d.setColor(DisplayDriver::LIGHT);
-    d.setCursor(x, ty);
-    d.print(NAV_MARK);
+    d.setColor(DisplayDriver::LIGHT);     // LIGHT = ink (black): the selection bar
+    d.fillRect(x, y, w, height());
   }
 
-  const int tx = x + navw;     // content sits past the reserved nav-dot gutter
+  const int tx = x + navw;     // content sits past the reserved gutter
   const int rightX = x + w - 3;
 
   char buf[64];
