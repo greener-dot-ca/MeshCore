@@ -32,6 +32,18 @@ void genericBuzzer::startSeg() {
     _seg_until = millis() + s.ms;
 }
 
+// One-shot tick using tone()'s 3-arg form: the PWM peripheral counts out `ms`
+// worth of pulses and stops itself in hardware, so the duration is exact even
+// when a blocking e-ink refresh keeps loop() from running (playTones() relies on
+// loop() to call noTone(), so a stalled loop stretches those tones -- this does
+// not). Cancels any sequence/melody in progress; brief, fine for an activity tick.
+void genericBuzzer::chirp(uint16_t freq, uint16_t ms) {
+    if (_is_quiet || freq == 0 || ms == 0) return;
+    if (rtttl::isPlaying()) rtttl::stop();
+    if (_seq_active) { _seq_active = false; }
+    tone(PIN_BUZZER, freq, ms);
+}
+
 void genericBuzzer::playTones(const ToneSeg *segs, uint8_t n) {
     if (rtttl::isPlaying()) rtttl::stop();    // interrupt existing
     if (_is_quiet || n == 0) return;

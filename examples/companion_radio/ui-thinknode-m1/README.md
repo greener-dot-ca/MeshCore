@@ -23,9 +23,9 @@ available as a `*_legacy` build — see [Building](#building).
   - **GPS** — toggle + last-good-fix position/sats/altitude.
   - **Nav** — glyph compass: cycle through favourite nodes as waypoints, see distance + true bearing on a north-up rose.
   - **Bluetooth** — toggle + pairing pin.
-  - **Buzz** — buzzer on/off, new-message sound (CTU / Beep / Morse), and per-type packet tones.
+  - **Buzz** — buzzer on/off, and beep on messages (CTU / Beep / Morse) *or* on packets (per-type tones) — mutually exclusive.
   - **Time** — 12/24h format + UTC offset.
-  - **Power** — battery %, voltage, charging + Hibernate.
+  - **Power** — battery %, voltage, charging.
 - **Graceful sleep** — after 15 s idle the frontlight turns off and the image is retained; as it sleeps (and once a minute after) the panel is re-driven with a full black/white swing to clear accumulated partial-update ghosting, instead of the constant repaint that drives the panel continuously.
 - **Red LED battery heartbeat** — blinks every ~5 s while on battery; when plugged in the charger keeps ownership of the LED.
 
@@ -85,10 +85,12 @@ Any button press while the display is asleep only wakes it.
 
 ### Pages
 
-Pages are shown one at a time, in a fixed order shown by the **page-dot strip**
-at the bottom (one dot per page, the current one larger). When a page is taller
-than the screen, a **scrollbar** and up/down **more-arrows** appear on the right;
-selection moves item-to-item and the view follows it.
+Pages are shown one at a time, in a fixed order shown by the **page-icon bar**
+at the bottom — one glyph per page (⌂ ✉ 📡 ▤ 📻 📍 🧭 Ⓑ 🔔 🕐 ⏻), with the
+current page drawn reverse-video. When a page is taller than the screen, a
+glyph **scrollbar** (│ track, █ thumb) appears on the right; selection moves
+item-to-item and the view follows it. The whole UI is glyph-drawn, TUI-style —
+no rules or separators.
 
 1. **Home** — node name, `Send Advert` action, `Messages` unread count,
    `Uptime`, `Queue`, and `Help` (the overlay with the icon legend + button guide).
@@ -121,15 +123,19 @@ selection moves item-to-item and the view follows it.
    device like a map. Shows `?` / `--` without a fix or a located favourite.
    Holding select on the `Target` row steps through the waypoints (~¾ s apart).
 8. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
-9. **Buzz** — `Buzzer` master toggle, the new-message `Msg Sound` (CTU / Beep /
-   Morse), and `Pkt Tones`. Morse beeps the hop count: units digit in morse,
-   tens in the pitch — one octave per ten hops from 440 Hz (14 hops = `····−`
-   at 880 Hz); a direct message plays one plain tone. `Pkt Tones` (off by
-   default) chirps a brief tone for *every* packet the radio decodes, pitched
-   by payload type (advert / channel / direct msg / ack / …) — an audible read
-   on mesh traffic. Both obey the master `Buzzer` toggle.
+9. **Buzz** — `Buzzer` master toggle, plus `Beep On` (**Msgs** / **Pkts**, a
+   mutually-exclusive choice) and the `Msg Sound` style (CTU / Beep / Morse).
+   In **Msgs** mode the device beeps only on incoming messages, in the chosen
+   style; Morse beeps the hop count — units digit in morse, tens in the pitch,
+   one octave per ten hops from 440 Hz (14 hops = `····−` at 880 Hz), a direct
+   message plays one plain tone. In **Pkts** mode messages stay silent and
+   instead *every* decoded packet chirps a brief tone pitched by payload type
+   (advert / channel / direct msg / ack / …) — an audible read on mesh traffic.
+   Both obey the master `Buzzer` toggle.
 10. **Time** — clock `Format` (12/24h) and `UTC +/-` offset.
-11. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
+11. **Power** — `Battery` %, `Voltage`, `Charging` (info only; the manual
+    Hibernate action was removed — on this board waking is a cold boot and it
+    would not reach a genuinely low-power state, so it served no purpose).
 
 A boot **Splash** screen (logo + version + build date) shows for ~3 s first.
 
@@ -200,7 +206,7 @@ body).
 | File                       | Responsibility |
 |----------------------------|----------------|
 | `UIElements.{h,cpp}`       | `UIElement` struct, `ElemKind`, the `make*` factories, per-element draw. |
-| `ElementScreen.{h,cpp}`    | Scrollable element-list base: status bar, page-dots, scrollbar, focus/scroll logic, input routing. |
+| `ElementScreen.{h,cpp}`    | Scrollable element-list base: status bar, page-icon bar, glyph scrollbar, focus/scroll logic, input routing. |
 | `Pages.{h,cpp}`            | Concrete screens (Splash, Home, Messages drill-down, Mesh, RX Log, Radio, GPS, Bluetooth, Buzz, Time, Power) and their element getters/callbacks. |
 | `UITask.{h,cpp}`           | `AbstractUITask` implementation: owns the pages, button dispatch, refresh timing, LED/buzzer, message intake, shutdown. |
 | `NativeEinkDisplay.{h,cpp}`| `DisplayDriver` that draws the GxEPD2 panel 1:1 at 200×200 (no scale), with a CRC dirty-check so a static frame costs no panel refresh, plus a UTF-8-aware Unifont blitter. |
@@ -211,7 +217,7 @@ Buttons: triangle = btn1 / user_btn / GPIO42; circle = btn2 / back_btn / GPIO39
 (active-low + internal pull-up).
 
 Chrome geometry is in native physical pixels on the 200×200 panel (no upscaler):
-a top status bar (battery + title) and bottom page-dot strip, with row height
+a top status bar (battery + title) and bottom page-icon bar, with row height
 fitting the 16px Unifont cell plus padding (`UIELEM_ROW_H`).
 
 ### Text rendering (GNU Unifont)

@@ -41,6 +41,11 @@
 #ifndef BLUE_LED_RX_FLASH_MS
   #define BLUE_LED_RX_FLASH_MS  50
 #endif
+// Minimum silent gap between per-packet "Pkt Tones" chirps, so a burst reads as
+// distinct ticks rather than a continuous tone.
+#ifndef PKT_TONE_GAP_MS
+  #define PKT_TONE_GAP_MS  45
+#endif
 
 #ifdef PIN_STATUS_LED
 #define LED_ON_MILLIS     20
@@ -283,8 +288,10 @@ static uint16_t pktToneFreq(uint8_t ptype) {
 #endif
 
 // Per-received-packet hook (from MyMesh::logRx). Flashes the blue status LED and,
-// when "Pkt Tones" is enabled, chirps a short tone whose pitch encodes the packet
-// type -- an audible read on mesh traffic. Not a user notification.
+// in "beep on packets" mode, chirps a short tone whose pitch encodes the packet
+// type -- an audible read on mesh traffic. Not a user notification. The beep
+// modes are mutually exclusive (packets XOR messages), so no coordination with
+// the message-notification sound is needed.
 void UITask::onPacketRx(uint8_t ptype) {
 #if defined(P_LORA_TX_LED)
   // Blue LED flash (TX lights it for the whole send via the board's
@@ -294,9 +301,13 @@ void UITask::onPacketRx(uint8_t ptype) {
 #endif
 
 #if defined(PIN_BUZZER)
-  if (_node_prefs && _node_prefs->pkt_tones) {
-    ToneSeg t = { pktToneFreq(ptype), PKT_TONE_MS };
-    buzzer.playTones(&t, 1);   // no-ops when the buzzer is quiet
+  if (_node_prefs && _node_prefs->pkt_tones) {   // pkt_tones == "beep on packets"
+    // Rate-limit so a burst reads as distinct ticks, not one continuous drone.
+    unsigned long now = millis();
+    if (now - _last_chirp_at >= (unsigned long)(PKT_TONE_MS + PKT_TONE_GAP_MS)) {
+      buzzer.chirp(pktToneFreq(ptype), PKT_TONE_MS);   // no-ops when the buzzer is quiet
+      _last_chirp_at = now;
+    }
   }
 #endif
 }
@@ -304,8 +315,11 @@ void UITask::onPacketRx(uint8_t ptype) {
 void UITask::notify(UIEventType t) {
 #if defined(PIN_BUZZER)
   // Incoming-message sounds are played from newMsg() instead, which knows the
-  // hop count (needed for the morse mode). Here we only do the short ack click.
-  if (t == UIEventType::ack) buzzer.play("ack:d=32,o=8,b=120:c");
+  // hop count (needed for the morse mode). Here we only do the short ack click --
+  // suppressed in "beep on packets" mode (the packet chirp covers the ack packet).
+  if (t == UIEventType::ack && !(_node_prefs && _node_prefs->pkt_tones)) {
+    buzzer.play("ack:d=32,o=8,b=120:c");
+  }
 #endif
 
 #ifdef PIN_VIBRATION
@@ -383,12 +397,13 @@ void UITask::setBuzzerMode(uint8_t m) {
   playMsgSound(3);   // preview: morse mode demos hop count "3"
 }
 
-void UITask::togglePktTones() {
+void UITask::cycleBeepMode() {
   if (!_node_prefs) return;
-  _node_prefs->pkt_tones = _node_prefs->pkt_tones ? 0 : 1;
+  _node_prefs->pkt_tones = _node_prefs->pkt_tones ? 0 : 1;   // messages <-> packets
   the_mesh.savePrefs();
 #if defined(PIN_BUZZER)
-  if (_node_prefs->pkt_tones) onPacketRx(PAYLOAD_TYPE_TXT_MSG);   // preview chirp when enabling
+  if (_node_prefs->pkt_tones) buzzer.chirp(pktToneFreq(PAYLOAD_TYPE_TXT_MSG), PKT_TONE_MS);  // packets preview
+  else playMsgSound(3);                                                                      // messages preview
 #endif
 }
 
@@ -420,7 +435,9 @@ void UITask::msgRead(int msgcount) {
 
 void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) {
   _msgcount = msgcount;
-  playMsgSound(path_len);   // configured notification sound (morse mode uses the hops)
+  // Message notification sound -- only in "beep on messages" mode. In "beep on
+  // packets" mode this message already chirped as a packet in onPacketRx().
+  if (!(_node_prefs && _node_prefs->pkt_tones)) playMsgSound(path_len);
 
   if (_display != NULL && !_display->isOn()) {
     _display->turnOn();   // light the screen/backlight on a new message (even when app-connected)
@@ -516,55 +533,30 @@ void UITask::userLedHandler() {
 #endif
 }
 
-void UITask::shutdown(bool restart) {
+// Low-battery auto power-off (the only shutdown path; manual hibernate was
+// removed). The caller has already painted the reason on the e-ink, which holds
+// the image with no power, so we just go dark and cut power.
+void UITask::shutdown() {
 #ifdef PIN_BUZZER
   buzzer.shutdown();
   uint32_t buzzer_timer = millis();
   while (buzzer.isPlaying() && (millis() - 2500) < buzzer_timer)
     buzzer.loop();
 #endif
-
-  if (restart) {
-    _board->reboot();
-  } else {
-    // Paint a clear, ghost-free "Hibernating" notice so the e-ink (which holds its
-    // last image with no power) plainly shows the device is asleep and how to wake
-    // it -- otherwise the frozen UI looks like a crash. Waking is a cold boot, which
-    // repaints over this on its own.
-    if (_display != NULL) {
-      _display->fullRefresh();
-      _display->startFrame();
-      const int w = _display->width();
-      const int h = _display->height();
-      _display->setColor(DisplayDriver::LIGHT);
-      _display->setTextSize(1);
-      _display->drawTextCentered(w / 2, h / 2 - 20, "Hibernating");
-      _display->drawTextCentered(w / 2, h / 2 + 4, "Press any key");
-      _display->drawTextCentered(w / 2, h / 2 + 20, "to wake");
-      _display->endFrame();   // e-ink update is synchronous; image persists after power-off
-      _display->turnOff();    // kill the frontlight; the panel keeps the image
-    }
-    radio_driver.powerOff();
-    _board->powerOff();
-  }
+  if (_display != NULL) _display->turnOff();   // kill the frontlight; the panel keeps the image
+  radio_driver.powerOff();
+  _board->powerOff();
 }
 
 uint32_t UITask::currentEpoch() const {
   return the_mesh.getRTCClock()->getCurrentTime();
 }
 
-bool UITask::isButtonPressed() const {
-#ifdef PIN_USER_BTN
-  return user_btn.isPressed();
-#else
-  return false;
-#endif
-}
-
 void UITask::loop() {
 #ifdef USE_NATIVE_EINK_UI
   display.pollHibernate();   // deep-sleep the panel once refreshes have gone idle
 #endif
+
 
   // Per the official M1 manual: circle = function/select, triangle = page turn. ev drives
   // the function/element logic, ev2 the page logic -- so circle feeds ev, triangle feeds ev2.

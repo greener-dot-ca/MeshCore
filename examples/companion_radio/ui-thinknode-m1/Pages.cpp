@@ -150,8 +150,9 @@ static void buzzerToggle(const UIElement& e) { T(e)->toggleBuzzer(); }
 static const char* const buzzModeOpts[] = { "CTU", "Beep", "Morse" };
 static int  buzzModeGet(const UIElement& e)  { return T(e)->getBuzzerMode(); }
 static void buzzModeNext(const UIElement& e) { T(e)->setBuzzerMode(T(e)->getBuzzerMode() + 1); }
-static bool pktTonesGet(const UIElement& e)    { return T(e)->getPktTones(); }
-static void pktTonesToggle(const UIElement& e) { T(e)->togglePktTones(); }
+static const char* const beepOnOpts[] = { "Msgs", "Pkts" };
+static int  beepModeGet(const UIElement& e)  { return T(e)->getBeepMode(); }
+static void beepModeNext(const UIElement& e) { T(e)->cycleBeepMode(); }
 
 // ----- time page callbacks -----
 static const char* const timeFmtOpts[] = { "24h", "12h" };
@@ -196,7 +197,6 @@ static void offGridToggle(const UIElement& e) { T(e)->toggleOffGrid(); }
 static const char* const freqOpts[] = { "433", "869", "918" };
 static int  freqGet(const UIElement& e)  { return T(e)->getFreqPreset(); }
 static void freqNext(const UIElement& e) { T(e)->cycleFreqPreset(); }
-static void hibernateCb(const UIElement& e) { ((ShutdownScreen*)e.ctx)->initShutdown(); }
 
 // ----- Radio settings getters (read-only; the actual tuned LoRa params, set via
 // the app -- the on-device controls are the Off-grid toggle + freq preset above) -----
@@ -264,7 +264,7 @@ static void relTime(char* out, size_t cap, uint32_t ts) {
   uint32_t now = the_mesh.getRTCClock()->getCurrentTime();
   if (ts == 0 || now < ts) return;             // unknown, or clock not yet synced
   uint32_t s = now - ts;
-  if      (s < 60)    strncpy(out, "now", cap);
+  if      (s < 60)    strncpy(out, "0m", cap);
   else if (s < 3600)  snprintf(out, cap, "%lum", (unsigned long)(s / 60));
   else if (s < 86400) snprintf(out, cap, "%luh", (unsigned long)(s / 3600));
   else                snprintf(out, cap, "%lud", (unsigned long)(s / 86400));
@@ -493,8 +493,8 @@ BluetoothScreen::BluetoothScreen(UITask* task, NodePrefs* prefs) : ElementScreen
 // ============================================================ BuzzScreen
 BuzzScreen::BuzzScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Buzz") {
   _items[0] = makeToggle("Buzzer", task, buzzerGet, buzzerToggle);          // master enable
-  _items[1] = makeCycle("Msg Sound", task, buzzModeOpts, 3, buzzModeGet, buzzModeNext);  // new-message notification
-  _items[2] = makeToggle("Pkt Tones", task, pktTonesGet, pktTonesToggle);   // per-type chirp on every RX
+  _items[1] = makeCycle("Beep On", task, beepOnOpts, 2, beepModeGet, beepModeNext);      // messages XOR packets
+  _items[2] = makeCycle("Msg Sound", task, buzzModeOpts, 3, buzzModeGet, buzzModeNext);  // style (Beep On = Msgs)
   _elems = _items; _count = 3;
 }
 
@@ -791,26 +791,18 @@ int HelpScreen::render(DisplayDriver& d) {
 }
 
 // ============================================================ ShutdownScreen
+// Power info page (manual hibernate was removed -- pointless on this board, since
+// waking is a cold boot and it wouldn't reach a genuinely low-power state).
 ShutdownScreen::ShutdownScreen(UITask* task, NodePrefs* prefs)
-    : ElementScreen(task, prefs, "Pwr"), _shutdown_init(false) {
+    : ElementScreen(task, prefs, "Pwr") {
   _elems = _items; _count = 0;
 }
 
 void ShutdownScreen::rebuild() {
-  if (_shutdown_init) {
-    _items[0] = makeLabel("Hibernating...", nullptr, nullptr);
-    _elems = _items; _count = 1;
-  } else {
-    _items[0] = makeLabel("Battery",  battPctText,   _task);
-    _items[1] = makeLabel("Voltage",  battVoltsText, _task);
-    _items[2] = makeLabel("Charging", chargingText,  _task);
-    _items[3] = makeAction("Hibernate", this, hibernateCb);
-    _elems = _items; _count = 4;
-  }
-}
-
-void ShutdownScreen::poll() {
-  if (_shutdown_init && !_task->isButtonPressed()) _task->shutdown();
+  _items[0] = makeLabel("Battery",  battPctText,   _task);
+  _items[1] = makeLabel("Voltage",  battVoltsText, _task);
+  _items[2] = makeLabel("Charging", chargingText,  _task);
+  _elems = _items; _count = 3;
 }
 
 // ============================================================ AdvertsScreen

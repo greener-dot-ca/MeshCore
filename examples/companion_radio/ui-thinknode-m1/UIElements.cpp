@@ -90,22 +90,15 @@ static int drawSymRight(DisplayDriver& d, int right, int y, const char* sym) {
 }
 
 void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const {
-  // Selection = full-row reverse video (solid black bar, white text) -- first-gen
-  // iPod style. An earlier build used a small '>' gutter marker instead because a
-  // solid bar streaked on the fast-partial waveform; retrying the bar now that the
-  // panel gets a periodic ghost-clearing swing + idle deep sleep. The gutter indent
-  // is kept so text doesn't shift when focus moves onto a row.
+  // Selection is a full-row reverse-video bar (first-gen iPod style); the caller
+  // (ElementScreen::render) paints it at full panel width before this runs, so
+  // here we just pick the ink colour and lay out the text within `w`.
   const DisplayDriver::Color fg = focused ? DisplayDriver::DARK : DisplayDriver::LIGHT;
   const int ty = y + UIELEM_PAD;
   d.setTextSize(1);
-  const int navw = d.getTextWidth(">");   // gutter width (kept for alignment)
-  if (focused) {
-    d.setColor(DisplayDriver::LIGHT);     // LIGHT = ink (black): the selection bar
-    d.fillRect(x, y, w, height());
-  }
 
-  const int tx = x + navw;     // content sits past the reserved gutter
-  const int rightX = x + w - 3;
+  const int tx = x;            // content starts at the first column
+  const int rightX = x + w;    // values right-align to the content's right column boundary (last col = scrollbar)
 
   char buf[64];
 
@@ -113,11 +106,11 @@ void UIElement::draw(DisplayDriver& d, int x, int y, int w, bool focused) const 
   if (rows >= 2) {
     d.setColor(fg);
     d.translateUTF8ToBlocks(buf, label ? label : "", sizeof(buf));
-    d.drawTextEllipsized(tx, ty, w - 7, buf);
+    d.drawTextEllipsized(tx, ty, w, buf);
     const char* l2 = get_text ? get_text(*this) : "";
     d.translateUTF8ToBlocks(buf, l2 ? l2 : "", sizeof(buf));
     d.setColor(fg);
-    d.drawTextEllipsized(tx, ty + UIELEM_ROW_H, w - 7, buf);
+    d.drawTextEllipsized(tx, ty + UIELEM_ROW_H, w, buf);
     return;
   }
 

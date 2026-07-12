@@ -38,13 +38,13 @@ protected:
   int         _scroll_y;    // pixel scroll offset into the content column
   bool        _show_focus;  // draw the selection bar (false = screen is sleeping)
 
-  // native 200x200 panel geometry (NativeEinkDisplay renders 1:1, 16px Unifont)
-  static const int STATUS_H      = 20;   // top status-bar height (16px text + separator)
-  static const int DOTS_H        = 16;   // bottom page-dot strip (fits a 16px ●/○ glyph)
-  static const int USABLE_BOTTOM = 198;  // e-ink usable height (~2px panel margin)
+  // native 200x200 panel on a 16px-row / 8px-column glyph grid (12 rows x 25 cols).
+  static const int STATUS_H      = 16;   // row 0: status bar (one glyph row, no separator)
+  static const int DOTS_H        = 16;   // row 11: bottom page-icon bar
+  static const int USABLE_BOTTOM = 192;  // 12 full 16px rows on the 200px panel
   static const int SPACING       = 0;    // gap between elements
 
-  int contentTop()    const { return STATUS_H + 1; }
+  int contentTop()    const { return STATUS_H; }         // row 1
   int contentBottom() const { return USABLE_BOTTOM - DOTS_H; }
   int viewportH()     const { return contentBottom() - contentTop(); }
   int elemTop(int idx) const;            // content-space y of element idx (idx==_count => total height)

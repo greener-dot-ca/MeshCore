@@ -223,14 +223,11 @@ public:
 };
 
 class ShutdownScreen : public ElementScreen {
-  UIElement _items[4];
-  bool _shutdown_init;
+  UIElement _items[3];
 protected:
   void rebuild() override;
   int pageIndex() const override { return PAGE_SHUTDOWN; }
   int pageCount() const override { return PAGE_COUNT; }
 public:
   ShutdownScreen(UITask* task, NodePrefs* prefs);
-  void poll() override;
-  void initShutdown() { _shutdown_init = true; }
 };

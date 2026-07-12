@@ -27,6 +27,7 @@ class genericBuzzer
         void begin();  // set up buzzer port
         void play(const char *melody); // Generic play function
         void playTones(const ToneSeg *segs, uint8_t n);  // non-blocking raw tone sequence
+        void chirp(uint16_t freq, uint16_t ms);  // one-shot, HARDWARE-timed (exact even if loop() stalls)
         void loop();  // loop driven-nonblocking
         void startup();  // play startup sound
         void shutdown();  // play shutdown sound

@@ -39,6 +39,20 @@ public:
     digitalWrite(P_LORA_TX_LED, LOW);
     #endif
 
+    // Wait for BOTH function keys to be released before arming them as wake
+    // sources. Hibernate is reached by holding a key, so it is still down here;
+    // nRF52 GPIO SENSE latches immediately if the pin is already at the sense
+    // level when armed, so arming a still-held key as a SENSE_LOW wake would wake
+    // the board right back up -- a "hibernate" that instantly reboots. Both keys
+    // are active-low with a pull-up. Bounded so a stuck key can't hang forever.
+    pinMode(PIN_BUTTON1, INPUT_PULLUP);
+    pinMode(PIN_BUTTON2, INPUT_PULLUP);
+    unsigned long wait_start = millis();
+    while ((digitalRead(PIN_BUTTON1) == LOW || digitalRead(PIN_BUTTON2) == LOW)
+           && millis() - wait_start < 8000) {
+      delay(10);
+    }
+
     // Arm the two function keys (active-low, internal pull-up) as SYSTEM OFF wake
     // sources, so a press cold-boots the board out of Hibernate. Both are armed so
     // either key wakes it. Mirrors MeshtinyBoard / TechoCardBoard.

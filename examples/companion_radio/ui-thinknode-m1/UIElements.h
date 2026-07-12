@@ -3,11 +3,12 @@
 #include <helpers/ui/DisplayDriver.h>
 #include <stdint.h>
 
-// Per-element layout (native px). One element occupies `rows` text rows
-// plus a small padding above/below for the selection border. Row height fits
-// the 16px Unifont cell (NativeEinkDisplay) plus breathing room.
-#define UIELEM_ROW_H  18
-#define UIELEM_PAD     2
+// TUI grid: everything snaps to a 16px glyph row and an 8px glyph column (the
+// half-width Unifont cell). One element occupies `rows` grid rows exactly, with
+// no padding, so element tops always land on a row boundary.
+#define UIELEM_ROW_H  16   // GRID_ROW: Unifont cell height
+#define UIELEM_PAD     0
+#define GRID_COL       8    // half-width Unifont cell (a "column")
 
 enum class ElemKind : uint8_t { Label, Toggle, Action, OptionCycle };
 

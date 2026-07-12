@@ -55,6 +55,7 @@ class UITask : public AbstractUITask {
   unsigned long _red_batt_at = 0;  // next "battery full?" ADC poll while on external power
   bool _red_full = false;          // last poll said charge complete (solid red)
   unsigned long _blue_led_off_at = 0;  // end of the blue LED's per-packet RX flash (0 = idle)
+  unsigned long _last_chirp_at = 0;    // last packet chirp (rate-limit for distinct ticks)
 #endif
 
   UIScreen*            splash;
@@ -111,7 +112,6 @@ public:
   int  getMsgCount() const { return _msgcount; }
   uint32_t currentEpoch() const;   // device clock (UTC epoch secs, 0 if unset)
   bool hasDisplay() const { return _display != NULL; }
-  bool isButtonPressed() const;
 
   bool isBuzzerQuiet() {
 #ifdef PIN_BUZZER
@@ -125,8 +125,9 @@ public:
   void toggleBuzzer();
   uint8_t getBuzzerMode() const { return _node_prefs ? _node_prefs->buzzer_mode : 0; }
   void setBuzzerMode(uint8_t m);   // persist + play a preview
-  bool getPktTones() const { return _node_prefs && _node_prefs->pkt_tones; }
-  void togglePktTones();           // per-packet type-tone chirps on/off (persist)
+  // Beep target (mutually exclusive): 0 = beep on messages, 1 = beep on packets.
+  uint8_t getBeepMode() const { return (_node_prefs && _node_prefs->pkt_tones) ? 1 : 0; }
+  void cycleBeepMode();            // flip messages <-> packets (persist + preview)
 
 
   // displayed-time settings (Time page)
@@ -152,5 +153,5 @@ public:
   void onPacketRx(uint8_t ptype) override;   // RX activity LED + optional per-type tone
   void loop() override;
 
-  void shutdown(bool restart = false);
+  void shutdown();   // low-battery auto power-off
 };

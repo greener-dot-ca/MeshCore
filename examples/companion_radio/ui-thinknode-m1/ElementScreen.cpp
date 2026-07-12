@@ -168,7 +168,7 @@ int ElementScreen::drawBattery(DisplayDriver& d, int right) {
   char blk[4] = { (char)0xE2, (char)0x96, (char)(0x80 + level), 0 };
   int w = d.getTextWidth(blk);
   d.setColor(DisplayDriver::GREEN);
-  d.setCursor(right - w, 2);
+  d.setCursor(right - w, 0);
   d.print(blk);
   int left = right - w;
 
@@ -176,7 +176,7 @@ int ElementScreen::drawBattery(DisplayDriver& d, int right) {
     const char* bolt = "\xE2\x9A\xA1";        // U+26A1
     int bw = d.getTextWidth(bolt);
     d.setColor(DisplayDriver::GREEN);
-    d.setCursor(left - bw, 2);
+    d.setCursor(left - bw, 0);
     d.print(bolt);
     left -= bw;
   }
@@ -185,15 +185,17 @@ int ElementScreen::drawBattery(DisplayDriver& d, int right) {
 
 void ElementScreen::drawStatusBar(DisplayDriver& d) {
   d.setTextSize(1);
-  const int ty = 2;   // 16px glyphs span y=2..18 in the 20px bar
+  const int ty = 0;   // row 0
 
-  // right side: clock (rightmost), then battery (+charge bolt) to its left
+  // right side: clock (rightmost), then battery (+charge bolt) to its left. Every
+  // item is a whole number of 8px columns and the clock's right edge is the panel
+  // edge (200), so column-adjacent placement keeps the whole cluster on the grid.
   char clk[12];
   uiFormatClock(_prefs, _task->currentEpoch(), clk, sizeof(clk));
   int cw = d.getTextWidth(clk);
   d.setColor(DisplayDriver::LIGHT);
   d.drawTextRightAlign(d.width(), ty, clk);
-  int x = drawBattery(d, d.width() - cw - 4);   // returns left edge of battery (or bolt)
+  int x = drawBattery(d, d.width() - cw);        // returns left edge of battery (or bolt)
 
   // status icons (BLE-off / app / GPS / muted) as Unifont symbols, right-justified before battery
   const char* icons[4]; DisplayDriver::Color col[4]; int ni = 0;
@@ -203,8 +205,8 @@ void ElementScreen::drawStatusBar(DisplayDriver& d) {
 #ifdef PIN_BUZZER
   if (_task->isBuzzerQuiet())  { icons[ni] = "\xF0\x9F\x94\x87"; col[ni] = DisplayDriver::RED;  ni++; } // 🔇
 #endif
-  for (int i = ni - 1; i >= 0; i--) {            // place right-to-left, flush to the battery
-    x -= d.getTextWidth(icons[i]) + 1;
+  for (int i = ni - 1; i >= 0; i--) {            // place right-to-left, column-adjacent
+    x -= d.getTextWidth(icons[i]);
     d.setColor(col[i]);
     d.setCursor(x, ty);
     d.print(icons[i]);
@@ -217,40 +219,75 @@ void ElementScreen::drawStatusBar(DisplayDriver& d) {
   d.setCursor(0, ty);
   d.print(title);
 
-  d.setColor(DisplayDriver::LIGHT);
-  d.fillRect(0, STATUS_H - 2, d.width(), 1);   // separator
 }
+
+// Bottom bar: one glyph per page (in PAGE_* order), the current page shown
+// reverse-video. Keep this array in sync with the enum in Pages.h.
+static const char* const PAGE_ICONS[] = {
+  "\xE2\x8C\x82",       // PAGE_HOME       ⌂ house
+  "\xE2\x9C\x89",       // PAGE_MESSAGES   ✉ envelope
+  "\xF0\x9F\x93\xA1",   // PAGE_MESH       📡 antenna
+  "\xE2\x96\xA4",       // PAGE_RXLOG      ▤ list
+  "\xF0\x9F\x93\xBB",   // PAGE_RADIO      📻 radio
+  "\xF0\x9F\x93\x8D",   // PAGE_GPS        📍 pin
+  "\xF0\x9F\xA7\xAD",   // PAGE_NAV        🧭 compass
+  "\xE2\x92\xB7",       // PAGE_BLUETOOTH  Ⓑ circled-B
+  "\xF0\x9F\x94\x94",   // PAGE_BUZZ       🔔 bell
+  "\xF0\x9F\x95\x90",   // PAGE_TIME       🕐 clock
+  "\xE2\x8F\xBB",       // PAGE_SHUTDOWN   ⏻ power
+};
 
 void ElementScreen::drawPageDots(DisplayDriver& d) {
   int n = pageCount();
   if (n <= 1) return;
+  const int NICONS = (int)(sizeof(PAGE_ICONS) / sizeof(PAGE_ICONS[0]));
+  if (n > NICONS) n = NICONS;
   int cur = pageIndex();
-  const char* full = "\xE2\x97\x8F";   // ● U+25CF (current page)
-  const char* ring = "\xE2\x97\x8B";   // ○ U+25CB (other pages)
-  int gw = d.getTextWidth(full);
-  int spacing = gw + 2;
-  int x = d.width() / 2 - (spacing * (n - 1) + gw) / 2;
-  int y = USABLE_BOTTOM - 16;          // bottom-align the 16px glyph cell
-  d.setColor(DisplayDriver::LIGHT);
+  d.setTextSize(1);
+  const int y = USABLE_BOTTOM - 16;            // row 11
+  // Column-adjacent (gap 0); each icon is a whole number of columns, so snapping
+  // the start to a column boundary keeps every icon on the grid.
+  int total = 0;
+  for (int i = 0; i < n; i++) total += d.getTextWidth(PAGE_ICONS[i]);
+  int x = ((d.width() - total) / 2) & ~(GRID_COL - 1);
+  if (x < 0) x = 0;
   for (int i = 0; i < n; i++) {
+    const char* g = PAGE_ICONS[i];
+    int gw = d.getTextWidth(g);
+    if (i == cur) {                             // reverse-video: white glyph on a black cell
+      d.setColor(DisplayDriver::LIGHT);
+      d.fillRect(x, y, gw, 16);
+      d.setColor(DisplayDriver::DARK);
+    } else {
+      d.setColor(DisplayDriver::LIGHT);
+    }
     d.setCursor(x, y);
-    d.print(i == cur ? full : ring);
-    x += spacing;
+    d.print(g);
+    x += gw;
   }
 }
 
+// TUI-style scrollbar: a column of glyphs at the right edge -- light vertical
+// bars for the track, full blocks for the thumb (no drawn rectangles).
 void ElementScreen::drawScrollbar(DisplayDriver& d) {
   int top = contentTop(), vp = viewportH(), ch = contentHeight();
   if (ch <= vp) return;
-  int x = d.width() - 2;
+  static const char* const TRACK = "\xE2\x94\x82";   // │ U+2502
+  static const char* const THUMB = "\xE2\x96\x88";   // █ U+2588
+  d.setTextSize(1);
+  int gw = d.getTextWidth(TRACK);
+  int x = d.width() - gw;
+  int cells = vp / 16;                               // 16px glyph rows in the viewport
+  if (cells < 1) cells = 1;
+  int thumb_cells = cells * vp / ch;
+  if (thumb_cells < 1) thumb_cells = 1;
+  int max_off = ch - vp;
+  int thumb_start = (max_off > 0) ? (_scroll_y * (cells - thumb_cells) + max_off / 2) / max_off : 0;
   d.setColor(DisplayDriver::LIGHT);
-  d.drawRect(x, top, 1, vp);
-  int thumb_h = vp * vp / ch;
-  if (thumb_h < 4) thumb_h = 4;
-  if (thumb_h > vp) thumb_h = vp;
-  int denom = ch - vp;
-  int thumb_y = top + (denom > 0 ? (_scroll_y * (vp - thumb_h) / denom) : 0);
-  d.fillRect(x, thumb_y, 2, thumb_h);
+  for (int i = 0; i < cells; i++) {
+    d.setCursor(x, top + i * 16);
+    d.print((i >= thumb_start && i < thumb_start + thumb_cells) ? THUMB : TRACK);
+  }
 }
 
 int ElementScreen::render(DisplayDriver& d) {
@@ -262,7 +299,10 @@ int ElementScreen::render(DisplayDriver& d) {
   const int top = contentTop();
   const int vp = viewportH();
   const bool hasSB = contentHeight() > vp;
-  const int cw = d.width() - 4;   // always reserve the scrollbar gutter so content doesn't reflow
+  // Content uses every column from the first (x=0) to the last-but-one; the final
+  // column is always reserved for the scrollbar, so nothing reflows when it
+  // appears and the scrollbar never lands on the selection bar.
+  const int cw = d.width() - GRID_COL;
 
   for (int i = 0; i < _count; i++) {
     int et = elemTop(i);
@@ -270,7 +310,12 @@ int ElementScreen::render(DisplayDriver& d) {
     if (et < _scroll_y) continue;            // above viewport
     if (et + eh > _scroll_y + vp) break;      // below viewport (rest won't fit)
     int ey = top + (et - _scroll_y);
-    _elems[i].draw(d, 0, ey, cw, _show_focus && i == _focus);
+    bool foc = _show_focus && i == _focus;
+    if (foc) {                                // reverse-video selection bar (content columns)
+      d.setColor(DisplayDriver::LIGHT);
+      d.fillRect(0, ey, cw, eh);
+    }
+    _elems[i].draw(d, 0, ey, cw, foc);
   }
 
   if (hasSB) drawScrollbar(d);
