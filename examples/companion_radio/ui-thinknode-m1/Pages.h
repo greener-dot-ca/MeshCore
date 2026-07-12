@@ -101,10 +101,10 @@ public:
   BluetoothScreen(UITask* task, NodePrefs* prefs);
 };
 
-// Buzzer settings. For now just the on/off toggle; planned: customizable buzz
-// patterns (e.g. morse-beep the hop count on RX).
+// Buzzer settings: master enable, the new-message notification sound, and the
+// per-type "Pkt Tones" chirp played for every packet the radio decodes.
 class BuzzScreen : public ElementScreen {
-  UIElement _items[2];
+  UIElement _items[3];
 protected:
   int pageIndex() const override { return PAGE_BUZZ; }
   int pageCount() const override { return PAGE_COUNT; }

@@ -542,6 +542,7 @@ void MyMesh::logRx(mesh::Packet* packet, int len, float score) {
     for (int i = 0; i < n; i++) e.via[i] = packet->path[pb - n + i];
     e.via_len = n;
   }
+  if (_ui) _ui->onPacketRx(e.ptype);   // RX activity tick (status LED flash + optional tone)
 }
 
 int MyMesh::getRxLog(RxLogEntry dest[], int max_num) {

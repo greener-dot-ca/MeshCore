@@ -23,7 +23,7 @@ available as a `*_legacy` build — see [Building](#building).
   - **GPS** — toggle + last-good-fix position/sats/altitude.
   - **Nav** — glyph compass: cycle through favourite nodes as waypoints, see distance + true bearing on a north-up rose.
   - **Bluetooth** — toggle + pairing pin.
-  - **Buzz** — buzzer on/off + notification sound (CTU / Beep / Morse).
+  - **Buzz** — buzzer on/off, new-message sound (CTU / Beep / Morse), and per-type packet tones.
   - **Time** — 12/24h format + UTC offset.
   - **Power** — battery %, voltage, charging + Hibernate.
 - **Graceful sleep** — after 15 s idle the frontlight turns off and the image is retained; as it sleeps (and once a minute after) the panel is re-driven with a full black/white swing to clear accumulated partial-update ghosting, instead of the constant repaint that drives the panel continuously.
@@ -77,9 +77,9 @@ stands in for the old "previous item" gesture.
 ¹ In the first 8 s after boot, holding the circle button instead enters CLI rescue.
 
 ² **Hold the triangle button is always "back".** On a normal page it steps to the
-previous page. Inside Messages it pops up one level (message list →
-conversations) before resuming page navigation. In the read view, *clicking*
-the triangle returns to the message list and holding it jumps to Home.
+previous page. Inside Messages it pops up one level (read view → message list →
+conversations) before resuming page navigation — the same hold-to-back gesture
+at every level.
 
 Any button press while the display is asleep only wakes it.
 
@@ -121,7 +121,13 @@ selection moves item-to-item and the view follows it.
    device like a map. Shows `?` / `--` without a fix or a located favourite.
    Holding select on the `Target` row steps through the waypoints (~¾ s apart).
 8. **Bluetooth** — `Bluetooth` toggle, `App` (connected?), `Pin`.
-9. **Buzz** — `Buzzer` toggle and notification `Sound` (CTU / Beep / Morse).
+9. **Buzz** — `Buzzer` master toggle, the new-message `Msg Sound` (CTU / Beep /
+   Morse), and `Pkt Tones`. Morse beeps the hop count: units digit in morse,
+   tens in the pitch — one octave per ten hops from 440 Hz (14 hops = `····−`
+   at 880 Hz); a direct message plays one plain tone. `Pkt Tones` (off by
+   default) chirps a brief tone for *every* packet the radio decodes, pitched
+   by payload type (advert / channel / direct msg / ack / …) — an audible read
+   on mesh traffic. Both obey the master `Buzzer` toggle.
 10. **Time** — clock `Format` (12/24h) and `UTC +/-` offset.
 11. **Power** — `Battery` %, `Voltage`, `Charging`, and a `Hibernate` action.
 
@@ -139,7 +145,7 @@ mesh that the companion phone app hasn't pulled yet — organized in two levels
 - **Messages** — every message in the chosen conversation, newest first. Channel
   rows show the sender (`Alice: hey all`); direct rows show just the text.
   Selecting one opens a full-screen, word-wrapped **read view** (top line is the
-  `#channel sender` breadcrumb; circle pages down long messages, triangle click
+  `#channel sender` breadcrumb; circle pages down long messages, triangle hold
   returns to the list).
 
 This queue is the *only* on-device message store: there's no manual dismiss and

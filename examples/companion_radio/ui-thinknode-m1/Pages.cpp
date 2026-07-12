@@ -150,6 +150,8 @@ static void buzzerToggle(const UIElement& e) { T(e)->toggleBuzzer(); }
 static const char* const buzzModeOpts[] = { "CTU", "Beep", "Morse" };
 static int  buzzModeGet(const UIElement& e)  { return T(e)->getBuzzerMode(); }
 static void buzzModeNext(const UIElement& e) { T(e)->setBuzzerMode(T(e)->getBuzzerMode() + 1); }
+static bool pktTonesGet(const UIElement& e)    { return T(e)->getPktTones(); }
+static void pktTonesToggle(const UIElement& e) { T(e)->togglePktTones(); }
 
 // ----- time page callbacks -----
 static const char* const timeFmtOpts[] = { "24h", "12h" };
@@ -490,9 +492,10 @@ BluetoothScreen::BluetoothScreen(UITask* task, NodePrefs* prefs) : ElementScreen
 
 // ============================================================ BuzzScreen
 BuzzScreen::BuzzScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Buzz") {
-  _items[0] = makeToggle("Buzzer", task, buzzerGet, buzzerToggle);
-  _items[1] = makeCycle("Sound", task, buzzModeOpts, 3, buzzModeGet, buzzModeNext);
-  _elems = _items; _count = 2;
+  _items[0] = makeToggle("Buzzer", task, buzzerGet, buzzerToggle);          // master enable
+  _items[1] = makeCycle("Msg Sound", task, buzzModeOpts, 3, buzzModeGet, buzzModeNext);  // new-message notification
+  _items[2] = makeToggle("Pkt Tones", task, pktTonesGet, pktTonesToggle);   // per-type chirp on every RX
+  _elems = _items; _count = 3;
 }
 
 // ============================================================ TimeScreen

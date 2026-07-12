@@ -22,12 +22,24 @@
   #define CYCLE_HOLD_REPEAT_MS  750
 #endif
 
-// Red "Power" LED battery heartbeat: brief blink every PERIOD while on battery.
+// Red "Power" LED heartbeat while on battery, matched to Meshtastic's
+// StatusLEDModule: a 1ms blip once per second (~0.1% duty -- a faint alive-tick
+// that costs essentially no battery).
 #ifndef RED_LED_PERIOD_MILLIS
-  #define RED_LED_PERIOD_MILLIS  5000
+  #define RED_LED_PERIOD_MILLIS  1000
 #endif
 #ifndef RED_LED_ON_MILLIS
-  #define RED_LED_ON_MILLIS  60
+  #define RED_LED_ON_MILLIS  1
+#endif
+// Battery voltage treated as "charge complete" for the solid-on red LED while
+// externally powered (Meshtastic: charged = 100%). Slightly under 4.20V so the
+// solid state is actually reachable under load.
+#ifndef RED_LED_FULL_MILLIVOLTS
+  #define RED_LED_FULL_MILLIVOLTS  4150
+#endif
+// Blue status LED flash per received packet (TX lights it for the whole send).
+#ifndef BLUE_LED_RX_FLASH_MS
+  #define BLUE_LED_RX_FLASH_MS  50
 #endif
 
 #ifdef PIN_STATUS_LED
@@ -246,6 +258,49 @@ void UITask::cycleFreqPreset() {
   _next_refresh = 0;
 }
 
+#if defined(PIN_BUZZER)
+// A short per-packet chirp; pitch encodes the payload type so you can hear what
+// kind of traffic is passing. Frequencies are spread across a ~2 octave range,
+// roughly "lower for chatter, higher for the interesting stuff".
+#ifndef PKT_TONE_MS
+  #define PKT_TONE_MS  25
+#endif
+static uint16_t pktToneFreq(uint8_t ptype) {
+  switch (ptype) {
+    case PAYLOAD_TYPE_ADVERT:    return 523;   // C5  -- background presence beacons
+    case PAYLOAD_TYPE_GRP_TXT:   return 784;   // G5  -- channel chatter
+    case PAYLOAD_TYPE_GRP_DATA:  return 740;   // F#5
+    case PAYLOAD_TYPE_TXT_MSG:   return 1047;  // C6  -- direct messages
+    case PAYLOAD_TYPE_ACK:       return 1319;  // E6  -- crisp high tick
+    case PAYLOAD_TYPE_PATH:      return 587;   // D5
+    case PAYLOAD_TYPE_REQ:       return 880;   // A5
+    case PAYLOAD_TYPE_RESPONSE:  return 988;   // B5
+    case PAYLOAD_TYPE_ANON_REQ:  return 831;   // G#5
+    case PAYLOAD_TYPE_TRACE:     return 659;   // E5
+    default:                     return 440;   // A4  -- control/raw/multipart/unknown
+  }
+}
+#endif
+
+// Per-received-packet hook (from MyMesh::logRx). Flashes the blue status LED and,
+// when "Pkt Tones" is enabled, chirps a short tone whose pitch encodes the packet
+// type -- an audible read on mesh traffic. Not a user notification.
+void UITask::onPacketRx(uint8_t ptype) {
+#if defined(P_LORA_TX_LED)
+  // Blue LED flash (TX lights it for the whole send via the board's
+  // onBeforeTransmit/onAfterTransmit hooks). Turned off in userLedHandler().
+  digitalWrite(P_LORA_TX_LED, HIGH);
+  _blue_led_off_at = millis() + BLUE_LED_RX_FLASH_MS;
+#endif
+
+#if defined(PIN_BUZZER)
+  if (_node_prefs && _node_prefs->pkt_tones) {
+    ToneSeg t = { pktToneFreq(ptype), PKT_TONE_MS };
+    buzzer.playTones(&t, 1);   // no-ops when the buzzer is quiet
+  }
+#endif
+}
+
 void UITask::notify(UIEventType t) {
 #if defined(PIN_BUZZER)
   // Incoming-message sounds are played from newMsg() instead, which knows the
@@ -261,12 +316,15 @@ void UITask::notify(UIEventType t) {
 }
 
 #if defined(PIN_BUZZER)
-// Morse the hop count at 440Hz; a direct message (path_len 0xFF) has no hop
-// number so it gets one distinct tone instead. dit/dah ~50/150ms keeps a single
-// digit (hops are 0-7 in practice) under ~1s.
+// Morse the hop count: the UNITS digit in morse, the TENS in the pitch -- one
+// octave per ten hops from a 440Hz base (14 hops = "4" at 880Hz). The octave is
+// the interval non-musicians pick out most reliably, and it's unambiguous on a
+// square-wave piezo (these discs also get louder toward their ~2-4kHz resonance,
+// so the higher digits ring clearer). A direct message (path_len 0xFF) has no
+// hop number so it gets one distinct tone instead. dit/dah ~50/150ms keeps a
+// digit under ~1s.
 void UITask::playMorseHops(uint8_t path_len) {
-  const uint16_t F = 440;
-  const uint16_t DIT = 50, DAH = 150, GAP = 50, DGAP = 150;
+  const uint16_t DIT = 50, DAH = 150, GAP = 50;
   ToneSeg seq[48];
   uint8_t n = 0;
 
@@ -276,7 +334,7 @@ void UITask::playMorseHops(uint8_t path_len) {
   seq[n++] = { 0, 30 };
 
   if (path_len == 0xFF) {                 // direct: no hops to count
-    seq[n++] = { F, 250 };
+    seq[n++] = { 440, 250 };
     buzzer.playTones(seq, n);
     return;
   }
@@ -285,17 +343,15 @@ void UITask::playMorseHops(uint8_t path_len) {
     "-----", ".----", "..---", "...--", "....-",
     ".....", "-....", "--...", "---..", "----."
   };
-  char num[5];
   int hops = path_len & 63;                    // low 6 bits = hop count (top 2 = hash size)
-  snprintf(num, sizeof(num), "%d", hops);
+  int tens = hops / 10;
+  if (tens > 3) tens = 3;                      // cap at 3520Hz (piezo stays comfortable)
+  const uint16_t F = 440 << tens;              // 440 / 880 / 1760 / 3520 Hz
 
-  for (int d = 0; num[d] && n < 46; d++) {
-    if (d) seq[n++] = { 0, DGAP };            // gap between digits
-    const char* p = DIGIT[num[d] - '0'];
-    for (int i = 0; p[i] && n < 46; i++) {
-      if (i) seq[n++] = { 0, GAP };           // intra-character gap
-      seq[n++] = { F, (uint16_t)(p[i] == '-' ? DAH : DIT) };
-    }
+  const char* p = DIGIT[hops % 10];
+  for (int i = 0; p[i] && n < 46; i++) {
+    if (i) seq[n++] = { 0, GAP };              // intra-character gap
+    seq[n++] = { F, (uint16_t)(p[i] == '-' ? DAH : DIT) };
   }
   buzzer.playTones(seq, n);
 }
@@ -325,6 +381,15 @@ void UITask::setBuzzerMode(uint8_t m) {
   _node_prefs->buzzer_mode = m % 3;
   the_mesh.savePrefs();
   playMsgSound(3);   // preview: morse mode demos hop count "3"
+}
+
+void UITask::togglePktTones() {
+  if (!_node_prefs) return;
+  _node_prefs->pkt_tones = _node_prefs->pkt_tones ? 0 : 1;
+  the_mesh.savePrefs();
+#if defined(PIN_BUZZER)
+  if (_node_prefs->pkt_tones) onPacketRx(PAYLOAD_TYPE_TXT_MSG);   // preview chirp when enabling
+#endif
 }
 
 void UITask::setTimeFormat(uint8_t f) {
@@ -394,18 +459,43 @@ void UITask::userLedHandler() {
   }
 #endif
 
+#if defined(P_LORA_TX_LED)
+  // End of the blue LED's per-packet RX flash (set in notify(packetRx)).
+  if (_blue_led_off_at != 0 && millis() >= _blue_led_off_at) {
+    digitalWrite(P_LORA_TX_LED, LOW);
+    _blue_led_off_at = 0;
+  }
+#endif
+
 #if defined(LED_POWER)
-  // Red "Power" LED heartbeat: a brief blink every RED_LED_PERIOD while running on
-  // battery. When externally powered the charger hardware owns the LED, so release the
-  // pin (INPUT) and leave it alone.
+  // Red "Power" LED, matched to Meshtastic's StatusLEDModule on this board:
+  //   charging (external power, battery not full): the charger hardware blinks
+  //     it -- release the pin (INPUT) and stay out of the way;
+  //   charged (external power, battery full): solid ON;
+  //   on battery: 1ms blip once per second (the "LED heartbeat").
+  // Meshtastic's <=5%-battery critical fast-blink is unreachable here: the
+  // AUTO_SHUTDOWN_MILLIVOLTS cutoff powers the device off well above that.
   unsigned long now = millis();
   if (board.isExternalPowered()) {
-    if (_red_led_out) {                         // hand the pin back to the charger
+    if (_red_batt_at == 0 || now >= _red_batt_at) {   // "full yet?" ADC poll, every 8s
+      _red_batt_at = now + 8000;
+      _red_full = board.getBattMilliVolts() >= RED_LED_FULL_MILLIVOLTS;
+    }
+    if (_red_full) {
+      if (!_red_led_out || !_red_led_lit) {           // charge complete: solid ON
+        pinMode(LED_POWER, OUTPUT);
+        digitalWrite(LED_POWER, LED_STATE_ON);
+        _red_led_out = true;
+        _red_led_lit = true;
+      }
+    } else if (_red_led_out) {                        // hand the pin back to the charger
       pinMode(LED_POWER, INPUT);
       _red_led_out = false;
       _red_led_lit = false;
     }
   } else {
+    _red_full = false;
+    _red_batt_at = 0;                           // re-poll promptly on the next USB attach
     if (!_red_led_out) {                        // take the pin for the heartbeat
       pinMode(LED_POWER, OUTPUT);
       digitalWrite(LED_POWER, !LED_STATE_ON);
@@ -413,11 +503,11 @@ void UITask::userLedHandler() {
       _red_led_lit = false;
       _red_led_at = now + RED_LED_PERIOD_MILLIS;
     }
-    if (!_red_led_lit && now >= _red_led_at) {          // start a blink
+    if (!_red_led_lit && now >= _red_led_at) {          // start a blip
       _red_led_lit = true;
       digitalWrite(LED_POWER, LED_STATE_ON);
       _red_led_at = now + RED_LED_ON_MILLIS;
-    } else if (_red_led_lit && now >= _red_led_at) {    // end the blink
+    } else if (_red_led_lit && now >= _red_led_at) {    // end the blip
       _red_led_lit = false;
       digitalWrite(LED_POWER, !LED_STATE_ON);
       _red_led_at = now + RED_LED_PERIOD_MILLIS - RED_LED_ON_MILLIS;
@@ -447,11 +537,10 @@ void UITask::shutdown(bool restart) {
       const int w = _display->width();
       const int h = _display->height();
       _display->setColor(DisplayDriver::LIGHT);
-      _display->setTextSize(2);
-      _display->drawTextCentered(w / 2, h / 2 - 28, "Hibernating");
       _display->setTextSize(1);
-      _display->drawTextCentered(w / 2, h / 2 + 12, "Press any key");
-      _display->drawTextCentered(w / 2, h / 2 + 28, "to wake");
+      _display->drawTextCentered(w / 2, h / 2 - 20, "Hibernating");
+      _display->drawTextCentered(w / 2, h / 2 + 4, "Press any key");
+      _display->drawTextCentered(w / 2, h / 2 + 20, "to wake");
       _display->endFrame();   // e-ink update is synchronous; image persists after power-off
       _display->turnOff();    // kill the frontlight; the panel keeps the image
     }
@@ -502,8 +591,9 @@ void UITask::loop() {
     // ---- read view ---- (click + hold only)
     //   circle    click = page down body, then on to the next (older) message
     //   circle    hold  = previous (newer) message  (CLI rescue in first 8s)
-    //   triangle  click = back to the message list (keeps the drill context)
-    //   triangle  hold  = Home
+    //   triangle  hold  = back to the message list (keeps the drill context)
+    // Triangle HOLD is the universal "back" everywhere; a leaf read view has no
+    // "next page", so triangle click is intentionally inert here.
     if (ev == BUTTON_EVENT_LONG_PRESS && millis() - ui_started_at < 8000) {
       the_mesh.enterCLIRescue();
     } else if (ev == BUTTON_EVENT_LONG_PRESS) {
@@ -511,12 +601,10 @@ void UITask::loop() {
     } else if (ev != BUTTON_EVENT_NONE) {
       if (!wakeIfOff() && !_detail->scrollDown()) navMessage(+1);
     }
-    if (ev2 == BUTTON_EVENT_CLICK) {
+    if (ev2 == BUTTON_EVENT_LONG_PRESS) {
       // return to the message list WITHOUT resetFocus so the drill context
       // (selected conversation/node) is preserved
       if (!wakeIfOff()) { curr_page = PAGE_MESSAGES; setCurrScreen(_messages); }
-    } else if (ev2 == BUTTON_EVENT_LONG_PRESS) {
-      if (!wakeIfOff()) gotoHomeScreen();
     }
   } else {
     // ---- circle button (back_btn / GPIO39): ELEMENT / function navigation ----
@@ -649,10 +737,10 @@ void UITask::loop() {
       if (!board.isExternalPowered()) {
         if (_display != NULL) {
           _display->startFrame();
-          _display->setTextSize(2);
+          _display->setTextSize(1);
           _display->setColor(DisplayDriver::RED);
           _display->drawTextCentered(_display->width() / 2, 20, "Low Battery.");
-          _display->drawTextCentered(_display->width() / 2, 40, "Shutting Down!");
+          _display->drawTextCentered(_display->width() / 2, 36, "Shutting Down!");
           _display->endFrame();
           if (_display->isEink() == false) { delay(3000); }
         }

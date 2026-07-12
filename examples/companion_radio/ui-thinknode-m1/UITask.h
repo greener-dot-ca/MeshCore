@@ -50,8 +50,11 @@ class UITask : public AbstractUITask {
 #endif
 #if defined(LED_POWER)
   unsigned long _red_led_at = 0;   // next red-LED heartbeat edge (battery only)
-  bool _red_led_lit = false;       // red LED currently lit within its blink window
-  bool _red_led_out = false;       // pin held as OUTPUT (released to INPUT on external power)
+  bool _red_led_lit = false;       // red LED currently lit (blip window / solid full)
+  bool _red_led_out = false;       // pin held as OUTPUT (released to INPUT while charging)
+  unsigned long _red_batt_at = 0;  // next "battery full?" ADC poll while on external power
+  bool _red_full = false;          // last poll said charge complete (solid red)
+  unsigned long _blue_led_off_at = 0;  // end of the blue LED's per-packet RX flash (0 = idle)
 #endif
 
   UIScreen*            splash;
@@ -122,6 +125,8 @@ public:
   void toggleBuzzer();
   uint8_t getBuzzerMode() const { return _node_prefs ? _node_prefs->buzzer_mode : 0; }
   void setBuzzerMode(uint8_t m);   // persist + play a preview
+  bool getPktTones() const { return _node_prefs && _node_prefs->pkt_tones; }
+  void togglePktTones();           // per-packet type-tone chirps on/off (persist)
 
 
   // displayed-time settings (Time page)
@@ -144,6 +149,7 @@ public:
   void msgRead(int msgcount) override;
   void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) override;
   void notify(UIEventType t = UIEventType::none) override;
+  void onPacketRx(uint8_t ptype) override;   // RX activity LED + optional per-type tone
   void loop() override;
 
   void shutdown(bool restart = false);
