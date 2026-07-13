@@ -474,10 +474,10 @@ int NavScreen::render(DisplayDriver& d) {
   d.setColor(DisplayDriver::LIGHT);
   d.setTextSize(1);
   d.drawTextCentered(cx, cy - 8, mark);              // arrow, same 16px as the rows
-  d.drawTextCentered(cx, cy - 26, "N");
-  d.drawTextCentered(cx, cy + 10, "S");
-  d.drawTextCentered(cx - 26, cy - 8, "W");
-  d.drawTextCentered(cx + 26, cy - 8, "E");
+  d.drawTextCentered(cx, cy - 24, "N");              // one grid row up
+  d.drawTextCentered(cx, cy + 8,  "S");              // one grid row down
+  d.drawTextCentered(cx - 24, cy - 8, "W");          // three columns left/right
+  d.drawTextCentered(cx + 24, cy - 8, "E");
   return ret;
 }
 
@@ -667,8 +667,8 @@ static int wrapText(DisplayDriver& d, int max_w, const char* g,
   return nl;
 }
 
-static const int MD_BODY_TOP = 40;   // below the 2-line 16px header (name + date/time)
-static const int MD_BOTTOM   = 196;
+static const int MD_BODY_TOP = 32;   // row 2, below the 2-row header (name + date/time)
+static const int MD_BOTTOM   = 192;  // 12 rows on the 200px panel (no page bar here)
 static int mdLinesPerPage() { return (MD_BOTTOM - MD_BODY_TOP) / UIELEM_ROW_H; }
 
 bool MessageDetailScreen::scrollDown() {
@@ -705,9 +705,9 @@ int MessageDetailScreen::render(DisplayDriver& d) {
   char hb[64];
   d.setColor(DisplayDriver::GREEN);
   d.translateUTF8ToBlocks(hb, hdr, sizeof(hb));
-  d.drawTextEllipsized(0, 2, d.width(), hb);
+  d.drawTextEllipsized(0, 0, d.width(), hb);            // row 0
 
-  // header line 2: "<date> - <route>" (date honors the Time page format + offset)
+  // header row 1: "<date> - <route>" (date honors the Time page format + offset)
   char date[24], when[40];
   _task->formatDateTime(_msg.timestamp, date, sizeof(date));
   if (_msg.is_direct) {
@@ -718,41 +718,38 @@ int MessageDetailScreen::render(DisplayDriver& d) {
     snprintf(when, sizeof(when), "%s - %uh - %ub", date, (unsigned)_msg.hops, hash_bytes);
   }
   d.setColor(DisplayDriver::LIGHT);
-  d.setCursor(0, 20);
+  d.setCursor(0, UIELEM_ROW_H);                         // row 1
   d.print(when);
-  d.fillRect(0, 38, d.width(), 1);
 
-  // body, word-wrapped (reserve a right gutter for the list scrollbar). Translate
-  // to display glyphs once so wrap widths match drawing and breaks are UTF-8 safe.
-  const int gutter = 4;
+  // body from row 2, word-wrapped; reserve the last column for the glyph scrollbar.
+  // Translate to display glyphs once so wrap widths match drawing (UTF-8 safe).
+  const int cw = d.width() - GRID_COL;
   char lines[WRAP_MAX_LINES][WRAP_LINE_CAP];
   char body_glyphs[MAX_FRAME_SIZE];
   d.translateUTF8ToBlocks(body_glyphs, body, sizeof(body_glyphs));   // cleaned body (no "Name: " prefix)
-  _total_lines = wrapText(d, d.width() - 4 - gutter, body_glyphs, lines, WRAP_MAX_LINES);
+  _total_lines = wrapText(d, cw, body_glyphs, lines, WRAP_MAX_LINES);
   if (_scroll_line >= _total_lines) _scroll_line = 0;
 
   const int per = mdLinesPerPage();
   d.setColor(DisplayDriver::LIGHT);
   for (int i = 0; i < per && (_scroll_line + i) < _total_lines; i++) {
-    d.setCursor(2, MD_BODY_TOP + i * UIELEM_ROW_H);
-    d.print(lines[_scroll_line + i]);   // already glyph-translated
-  }
-  if (_scroll_line + per < _total_lines) {        // more body below: circle pages down
-    d.drawTextRightAlign(d.width() - gutter - 1, MD_BOTTOM - UIELEM_ROW_H, "v");
+    d.setCursor(0, MD_BODY_TOP + i * UIELEM_ROW_H);     // first column
+    d.print(lines[_scroll_line + i]);                   // already glyph-translated
   }
 
-  // list scrollbar: this message's position in the list (newest at top); circle
-  // pages through the body then on to the next message.
-  if (_total > 1) {
-    int x = d.width() - 2;
-    int top = MD_BODY_TOP, h = MD_BOTTOM - MD_BODY_TOP;
-    d.setColor(DisplayDriver::LIGHT);
-    d.drawRect(x, top, 1, h);
-    int thumb_h = h / _total;
-    if (thumb_h < 4) thumb_h = 4;
-    if (thumb_h > h) thumb_h = h;
-    int thumb_y = top + _idx * (h - thumb_h) / (_total - 1);
-    d.fillRect(x, thumb_y, 2, thumb_h);
+  // glyph scrollbar (body position) in the last column when the body overflows.
+  if (_total_lines > per) {
+    static const char* const TRACK = "\xE2\x94\x82";    // │
+    static const char* const THUMB = "\xE2\x96\x88";    // █
+    int gw = d.getTextWidth(TRACK);
+    int sx = d.width() - gw;
+    int thumb_cells = per * per / _total_lines;  if (thumb_cells < 1) thumb_cells = 1;
+    int max_line = _total_lines - per;
+    int thumb_start = max_line > 0 ? (_scroll_line * (per - thumb_cells) + max_line / 2) / max_line : 0;
+    for (int i = 0; i < per; i++) {
+      d.setCursor(sx, MD_BODY_TOP + i * UIELEM_ROW_H);
+      d.print((i >= thumb_start && i < thumb_start + thumb_cells) ? THUMB : TRACK);
+    }
   }
   return 10000;   // e-ink: repaint only on interaction
 }
@@ -761,31 +758,28 @@ int MessageDetailScreen::render(DisplayDriver& d) {
 int HelpScreen::render(DisplayDriver& d) {
   d.setTextSize(1);
   d.setColor(DisplayDriver::GREEN);
-  d.setCursor(0, 2);
+  d.setCursor(0, 0);                                          // row 0
   d.print("Help");
-  d.setColor(DisplayDriver::LIGHT);
-  d.fillRect(0, 20, d.width(), 1);
 
-  // ---- status-bar icon legend (the same Unifont glyphs the bar uses) ----
+  // ---- status-bar icon legend (rows 1-5): icon in the first column, label at col 2 ----
   const char* icons[]  = { "\xF0\x9F\x93\xB1", "\xF0\x9F\x93\xB5", "\xF0\x9F\x93\x8D", "\xF0\x9F\x94\x87", "\xE2\x9A\xA1" }; // 📱📵📍🔇⚡
   const char* labels[] = { "App linked", "BLE off", "GPS on", "Muted", "Charging" };
-  int y = 24;
+  d.setColor(DisplayDriver::LIGHT);
   for (int i = 0; i < 5; i++) {
-    d.setCursor(2, y);  d.print(icons[i]);
-    d.setCursor(22, y); d.print(labels[i]);
-    y += 18;
+    int y = (1 + i) * UIELEM_ROW_H;
+    d.setCursor(0, y);            d.print(icons[i]);
+    d.setCursor(2 * GRID_COL, y); d.print(labels[i]);
   }
 
-  // ---- two buttons, click + hold only: ● moves/selects, ▲ pages/backs out ----
-  d.fillRect(0, y, d.width(), 1);                             // separator
-  y += 5;
-  d.setCursor(2, y);       d.print("\xE2\x97\x8F");           // ● (circle = function/select)
-  d.setCursor(22, y);      d.print("click: next item");
-  d.setCursor(22, y + 18); d.print("hold: select / open");
-  y += 40;
-  d.setCursor(2, y);       d.print("\xE2\x96\xB2");           // ▲ (triangle = page)
-  d.setCursor(22, y);      d.print("click: next page");
-  d.setCursor(22, y + 18); d.print("hold: back / prev");
+  // ---- button guide (rows 7-10): ● moves/selects, ▲ pages/backs out ----
+  static const char* const gicon[] = { "\xE2\x97\x8F", "\xE2\x97\x8F", "\xE2\x96\xB2", "\xE2\x96\xB2" }; // ● ● ▲ ▲
+  static const char* const gtext[] = { "click: next item", "hold: select/open",
+                                       "click: next page", "hold: back / prev" };
+  for (int i = 0; i < 4; i++) {
+    int y = (7 + i) * UIELEM_ROW_H;
+    d.setCursor(0, y);            d.print(gicon[i]);
+    d.setCursor(2 * GRID_COL, y); d.print(gtext[i]);
+  }
 
   return 3600000;   // static: only repaints on interaction (which dismisses it)
 }

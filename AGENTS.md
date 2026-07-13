@@ -38,5 +38,18 @@ If the upload can't find the board, double-tap reset to force the nRF52 bootload
 re-run the upload. Build artifacts land in `.pio/build/ThinkNode_M1_companion_radio_ble/`
 (`firmware.zip` is the DFU package, `firmware.hex` the full image).
 
+### Verifying a flash actually landed
+
+**Do not trust the `[SUCCESS]` summary alone** — it can report success without programming
+the board (e.g. when nothing is connected). Confirm two things:
+
+1. **The board is connected first:** `ls /dev/cu.usbmodem*` should list a port (e.g.
+   `/dev/cu.usbmodem111201`). No port = not plugged in; stop and ask the user to connect it.
+2. **The upload log shows a real DFU:** look for `Forcing reset using 1200bps ... `,
+   `Upgrading target ... with DFU package`, and **`Device programmed.`**. A genuine flash on
+   this board takes **~38 seconds**; a suspiciously fast (~13s) "success" did **not** actually
+   program. Don't pipe the upload through `tail -4` — grep for `Device programmed`/`%`/`error`
+   or read the full output so these lines are visible.
+
 Other M1 envs exist (`..._legacy` = old upscaled UI, `..._usb`, `..._repeater`,
 `..._room_server`), but the native e-ink UI is **`ThinkNode_M1_companion_radio_ble`**.

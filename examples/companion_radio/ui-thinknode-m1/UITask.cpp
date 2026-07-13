@@ -552,6 +552,47 @@ uint32_t UITask::currentEpoch() const {
   return the_mesh.getRTCClock()->getCurrentTime();
 }
 
+// A framed pop-up window with a dithered drop shadow -- old DOS/BBS dialog style,
+// drawn entirely from glyphs: a double-line box (U+2554..255D) over a cleared
+// white interior, with a U+2592 medium-shade shadow offset down-right for depth.
+static void drawDosPopup(DisplayDriver& d, const char* text) {
+  d.setTextSize(1);
+  int tw = d.getTextWidth(text);
+  int ww = ((tw + 32 + 7) / 8) * 8;           // text + 1-column pad + borders, rounded to a column
+  if (ww > 184) ww = 184;
+  const int wh = 48;                          // 3 rows: top border / text / bottom border
+  const int wx = ((d.width() - ww) / 2) & ~7; // column-aligned
+  const int wy = 64;
+
+  // Drop shadow: tile ▒ over the window rect shifted +8,+8. ww is a multiple of 8
+  // and wh of 16, so the tiling lands exactly (no overrun); the white interior
+  // then overdraws the overlap, leaving an 8px dithered strip on the right + bottom.
+  d.setColor(DisplayDriver::LIGHT);
+  for (int sy = wy + 8; sy < wy + 8 + wh; sy += 16)
+    for (int sx = wx + 8; sx < wx + 8 + ww; sx += 8) { d.setCursor(sx, sy); d.print("\xE2\x96\x92"); }
+
+  // Cleared interior (white) erases the content and the shadow overlap.
+  d.setColor(DisplayDriver::DARK);
+  d.fillRect(wx, wy, ww, wh);
+
+  // Double-line frame.
+  d.setColor(DisplayDriver::LIGHT);
+  d.setCursor(wx, wy);          d.print("\xE2\x95\x94");   // ╔
+  d.setCursor(wx, wy + 16);     d.print("\xE2\x95\x91");   // ║
+  d.setCursor(wx, wy + 32);     d.print("\xE2\x95\x9A");   // ╚
+  for (int x = wx + 8; x < wx + ww - 8; x += 8) {
+    d.setCursor(x, wy);         d.print("\xE2\x95\x90");   // ═
+    d.setCursor(x, wy + 32);    d.print("\xE2\x95\x90");   // ═
+  }
+  d.setCursor(wx + ww - 8, wy);       d.print("\xE2\x95\x97");   // ╗
+  d.setCursor(wx + ww - 8, wy + 16);  d.print("\xE2\x95\x91");   // ║
+  d.setCursor(wx + ww - 8, wy + 32);  d.print("\xE2\x95\x9D");   // ╝
+
+  // Centered text on the middle row.
+  d.setCursor(wx + (ww - tw) / 2, wy + 16);
+  d.print(text);
+}
+
 void UITask::loop() {
 #ifdef USE_NATIVE_EINK_UI
   display.pollHibernate();   // deep-sleep the panel once refreshes have gone idle
@@ -698,15 +739,8 @@ void UITask::loop() {
 
       _display->startFrame();
       int delay_millis = curr->render(*_display);
-      if (!asleep && millis() < _alert_expiry) {  // render alert popup (awake only)
-        _display->setTextSize(1);
-        int y = _display->height() / 3;
-        int p = _display->height() / 32;
-        _display->setColor(DisplayDriver::DARK);
-        _display->fillRect(p, y, _display->width() - p * 2, y);
-        _display->setColor(DisplayDriver::LIGHT);
-        _display->drawRect(p, y, _display->width() - p * 2, y);
-        _display->drawTextCentered(_display->width() / 2, y + p * 3, _alert);
+      if (!asleep && millis() < _alert_expiry) {  // DOS/BBS-style pop-up (awake only)
+        drawDosPopup(*_display, _alert);
         _next_refresh = _alert_expiry;
       } else if (asleep) {
         _next_refresh = _idle_refresh_at;   // stay dark until the next minute re-draw
@@ -731,8 +765,8 @@ void UITask::loop() {
           _display->startFrame();
           _display->setTextSize(1);
           _display->setColor(DisplayDriver::RED);
-          _display->drawTextCentered(_display->width() / 2, 20, "Low Battery.");
-          _display->drawTextCentered(_display->width() / 2, 36, "Shutting Down!");
+          _display->drawTextCentered(_display->width() / 2, 16, "Low Battery.");
+          _display->drawTextCentered(_display->width() / 2, 32, "Shutting Down!");
           _display->endFrame();
           if (_display->isEink() == false) { delay(3000); }
         }
