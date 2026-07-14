@@ -37,10 +37,6 @@ pio run -e ThinkNode_M1_companion_radio_ble_unifontui             # build
 pio run -e ThinkNode_M1_companion_radio_ble_unifontui -t upload   # flash
 ```
 
-Verifying a flash actually landed: the upload log must show **`Device programmed.`** and take
-~40 s — the `[SUCCESS]` summary alone can lie. Flash in the foreground (a stalled DFU can hang
-for minutes); don't have a serial terminal open on the port while flashing. See `AGENTS.md`.
-
 Branded **release** binaries (named `…_ble_unifontui-<ver>.uf2` + DFU `.zip`, landing in `out/`):
 
 ```sh
