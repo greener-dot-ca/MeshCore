@@ -7,6 +7,18 @@
   #define AUTO_OFF_MILLIS     15000   // 15 seconds
 #endif
 
+// While the display is awake (on external power, or during the on-window on battery), poll
+// at least this often so content changes (new packets, stats, messages) show promptly rather
+// than at the screen's slow self-refresh cadence (10s on USB / 60s on battery). endFrame()'s
+// CRC skips the physical e-ink refresh when nothing actually changed, so between real updates
+// this is just cheap buffer redraws. ~500ms ~= one partial refresh, so polling faster is moot.
+#ifndef FAST_REFRESH_MS
+  #define FAST_REFRESH_MS     500
+#endif
+// Screens declaring a cadence >= this are treated as static (Help/QR overlays return ~1h):
+// left alone so we don't pointlessly re-render / re-encode them every FAST_REFRESH_MS.
+#define STATIC_REFRESH_MS     600000
+
 // While the display is off, re-draw once this often to keep content current and
 // (in Full mode) re-drive every pixel to fight UV fade/ghosting. Between ticks the
 // e-ink holds its last image with no driving -- far less UV exposure than the live
@@ -99,6 +111,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   _messages = new MessagesScreen(this, node_prefs);
   _detail = new MessageDetailScreen(this);
   _help = new HelpScreen();
+  _qr = new QRScreen();
   pages[PAGE_HOME]      = new HomeScreen(this, node_prefs);
   pages[PAGE_MESH]      = new MeshScreen(this, node_prefs);
   pages[PAGE_RXLOG]     = new RxLogScreen(this, node_prefs);
@@ -130,6 +143,12 @@ void UITask::showHelp() {
   _help_return = curr;            // where a dismiss press returns to
   _help_return_page = curr_page;
   setCurrScreen(_help);
+}
+
+void UITask::showQR() {
+  _help_return = curr;            // reuse the overlay return path (any press dismisses)
+  _help_return_page = curr_page;
+  setCurrScreen(_qr);
 }
 
 void UITask::openMessageAt(int idx) {
@@ -192,6 +211,58 @@ void UITask::doAdvert() {
   } else {
     showAlert("Advert failed..", 1000);
   }
+}
+
+// ---- periodic self-advert (Mesh page) -------------------------------------
+// Preset intervals offered by the "Every" cycle; keep ascending.
+static const uint16_t ADVERT_MINS[] = { 5, 15, 30, 60, 120, 360, 720 };
+static const int ADVERT_MINS_N = (int)(sizeof(ADVERT_MINS) / sizeof(ADVERT_MINS[0]));
+#define ADVERT_MINS_DEFAULT 60
+
+bool UITask::getAutoAdvert() const {
+  return _node_prefs && _node_prefs->advert_auto;
+}
+
+void UITask::toggleAutoAdvert() {
+  if (!_node_prefs) return;
+  _node_prefs->advert_auto = _node_prefs->advert_auto ? 0 : 1;
+  if (_node_prefs->advert_auto && _node_prefs->advert_interval == 0)
+    _node_prefs->advert_interval = ADVERT_MINS_DEFAULT;   // arm with a sane default
+  the_mesh.savePrefs();
+  the_mesh.rescheduleAutoAdvert();
+}
+
+const char* UITask::advertIntervalLabel() const {
+  static char buf[8];
+  uint16_t m = (_node_prefs && _node_prefs->advert_interval) ? _node_prefs->advert_interval
+                                                             : ADVERT_MINS_DEFAULT;
+  if (m < 60)           snprintf(buf, sizeof(buf), "%um", (unsigned)m);
+  else if (m % 60 == 0) snprintf(buf, sizeof(buf), "%uh", (unsigned)(m / 60));
+  else                  snprintf(buf, sizeof(buf), "%uh%02um", (unsigned)(m / 60), (unsigned)(m % 60));
+  return buf;
+}
+
+void UITask::cycleAdvertInterval() {
+  if (!_node_prefs) return;
+  uint16_t cur = _node_prefs->advert_interval ? _node_prefs->advert_interval : ADVERT_MINS_DEFAULT;
+  int next = 0;                                       // wrap to smallest once past the top
+  for (int i = 0; i < ADVERT_MINS_N; i++) {
+    if (ADVERT_MINS[i] > cur) { next = i; break; }    // first preset strictly larger than current
+  }
+  _node_prefs->advert_interval = ADVERT_MINS[next];
+  the_mesh.savePrefs();
+  the_mesh.rescheduleAutoAdvert();
+}
+
+bool UITask::getAdvertLoc() const {
+  return _node_prefs && _node_prefs->advert_loc_policy == ADVERT_LOC_SHARE;
+}
+
+void UITask::toggleAdvertLoc() {
+  if (!_node_prefs) return;
+  _node_prefs->advert_loc_policy = (_node_prefs->advert_loc_policy == ADVERT_LOC_SHARE)
+      ? ADVERT_LOC_NONE : ADVERT_LOC_SHARE;
+  the_mesh.savePrefs();
 }
 
 void UITask::forceFullRefresh() {
@@ -605,8 +676,8 @@ void UITask::loop() {
   int ev2 = user_btn.check();    // triangle (user_btn / GPIO42) = page turn
   bool was_on = (_display != NULL && _display->isOn());   // a press that only wakes the screen shouldn't count as interaction
 
-  if (curr == _help) {
-    // ---- help overlay ---- any button press dismisses it back to where we were
+  if (curr == _help || curr == _qr) {
+    // ---- help / QR overlay ---- any button press dismisses it back to where we were
     if (ev != BUTTON_EVENT_NONE || ev2 != BUTTON_EVENT_NONE) {
       if (!wakeIfOff()) {
         curr_page = _help_return_page;
@@ -734,7 +805,7 @@ void UITask::loop() {
     if (millis() >= _next_refresh && curr) {
       // hide the selection bar while asleep (visual "screen off" hint); it
       // returns on the next render once awake.
-      ElementScreen* page = (onPage() && curr != _detail && curr != _help) ? (ElementScreen*)curr : NULL;
+      ElementScreen* page = (onPage() && curr != _detail && curr != _help && curr != _qr) ? (ElementScreen*)curr : NULL;
       if (page) page->setFocusVisible(!asleep);
 
       _display->startFrame();
@@ -745,6 +816,10 @@ void UITask::loop() {
       } else if (asleep) {
         _next_refresh = _idle_refresh_at;   // stay dark until the next minute re-draw
       } else {
+        // awake: poll fast so content changes show promptly (CRC dedups no-change frames);
+        // leave truly-static overlays (Help/QR) on their long cadence.
+        if (delay_millis > FAST_REFRESH_MS && delay_millis < STATIC_REFRESH_MS)
+          delay_millis = FAST_REFRESH_MS;
         _next_refresh = millis() + delay_millis;
       }
       _display->endFrame();

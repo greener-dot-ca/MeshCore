@@ -28,14 +28,14 @@ The M1 native-UI firmware is the BLE companion env. From the repo root:
 
 ```sh
 # build
-pio run -e ThinkNode_M1_companion_radio_ble
+pio run -e ThinkNode_M1_companion_radio_ble_unifontui
 
 # flash over USB (DFU; upload_protocol = nrfutil, auto-resets the board into its bootloader)
-pio run -e ThinkNode_M1_companion_radio_ble -t upload
+pio run -e ThinkNode_M1_companion_radio_ble_unifontui -t upload
 ```
 
 If the upload can't find the board, double-tap reset to force the nRF52 bootloader, then
-re-run the upload. Build artifacts land in `.pio/build/ThinkNode_M1_companion_radio_ble/`
+re-run the upload. Build artifacts land in `.pio/build/ThinkNode_M1_companion_radio_ble_unifontui/`
 (`firmware.zip` is the DFU package, `firmware.hex` the full image).
 
 ### Verifying a flash actually landed
@@ -51,5 +51,5 @@ the board (e.g. when nothing is connected). Confirm two things:
    program. Don't pipe the upload through `tail -4` — grep for `Device programmed`/`%`/`error`
    or read the full output so these lines are visible.
 
-Other M1 envs exist (`..._legacy` = old upscaled UI, `..._usb`, `..._repeater`,
-`..._room_server`), but the native e-ink UI is **`ThinkNode_M1_companion_radio_ble`**.
+Other M1 envs exist (`..._usb`, `..._repeater`, `..._room_server`), but the native e-ink UI
+is **`ThinkNode_M1_companion_radio_ble_unifontui`**.

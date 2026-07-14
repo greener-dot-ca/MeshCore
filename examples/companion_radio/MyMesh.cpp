@@ -536,6 +536,7 @@ void MyMesh::logRx(mesh::Packet* packet, int len, float score) {
   // last byte is the node whose transmission we actually heard. TRACE re-uses the
   // path field for per-hop SNRs (see Mesh.cpp), so it carries no relay hashes.
   e.via_len = 0;
+  e.hop_bytes = packet->getPathHashSize();     // 1..4; the last hop occupies the last hop_bytes of via[]
   if (e.ptype != PAYLOAD_TYPE_TRACE) {
     int pb = packet->getPathByteLen();
     int n = pb < (int)sizeof(e.via) ? pb : (int)sizeof(e.via);
@@ -1099,6 +1100,9 @@ void MyMesh::begin(bool has_display) {
   _prefs.tx_power_dbm = constrain(_prefs.tx_power_dbm, -9, MAX_LORA_TX_POWER);
   _prefs.gps_enabled = constrain(_prefs.gps_enabled, 0, 1);  // Ensure boolean 0 or 1
   _prefs.gps_interval = constrain(_prefs.gps_interval, 0, 86400);  // Max 24 hours
+  _prefs.advert_auto = constrain(_prefs.advert_auto, 0, 1);
+  _prefs.advert_interval = constrain(_prefs.advert_interval, 0, 1440); // minutes, max 24h
+  rescheduleAutoAdvert();
 
 #ifdef BLE_PIN_CODE // 123456 by default
   if (_prefs.ble_pin == 0) {
@@ -2332,6 +2336,9 @@ void MyMesh::checkCLIRescueCmd() {
 
       }
 
+    } else if (memcmp(cli_command, "screenshot", 10) == 0) {
+      int fmt = strstr(cli_command, "pbm") ? 1 : 0;   // "screenshot" = sixel, "screenshot pbm" = PBM
+      if (_ui) _ui->dumpScreenshot(Serial, fmt);
     } else if (strcmp(cli_command, "reboot") == 0) {
       board.reboot();  // doesn't return
     } else {
@@ -2392,8 +2399,17 @@ void MyMesh::loop() {
     dirty_contacts_expiry = 0;
   }
 
+  // periodic self-advert (zero-hop), if enabled
+  if (_prefs.advert_auto && _prefs.advert_interval > 0 && millisHasNowPassed(next_advert_millis)) {
+    advert();
+    next_advert_millis = futureMillis((unsigned long)_prefs.advert_interval * 60000UL);
+  }
+
 #ifdef DISPLAY_CLASS
-  if (_ui) _ui->setHasConnection(_serial->isConnected());
+  if (_ui) {
+    _ui->setHasConnection(_serial->isConnected());
+    _ui->setCLIRescue(_cli_rescue);   // let the status bar show the link is suspended
+  }
 #endif
 }
 
@@ -2410,6 +2426,34 @@ bool MyMesh::advert() {
   } else {
     return false;
   }
+}
+
+// (Re)arm the periodic self-advert timer. Called at boot and whenever the UI
+// changes the interval / enable flag. First auto-advert fires one interval out.
+void MyMesh::rescheduleAutoAdvert() {
+  next_advert_millis = (_prefs.advert_auto && _prefs.advert_interval > 0)
+      ? futureMillis((unsigned long)_prefs.advert_interval * 60000UL) : 0;
+}
+
+// Build the app's contact-share URL (docs/qr_codes.md) for our own identity, so the
+// Home screen can show it as a QR another MeshCore user scans to add us.
+int MyMesh::selfShareURI(char* out, size_t cap) {
+  char hexkey[PUB_KEY_SIZE * 2 + 1];
+  mesh::Utils::toHex(hexkey, self_id.pub_key, PUB_KEY_SIZE);
+  hexkey[PUB_KEY_SIZE * 2] = 0;
+  char enc[96]; int e = 0;                                  // URL-encode the node name
+  const char* nm = _prefs.node_name;
+  for (int i = 0; nm[i] && e < (int)sizeof(enc) - 4; i++) {
+    char c = nm[i];
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+        c == '-' || c == '_' || c == '.')  enc[e++] = c;
+    else if (c == ' ')                     enc[e++] = '+';
+    else                                   e += sprintf(&enc[e], "%%%02X", (unsigned char)c);
+  }
+  enc[e] = 0;
+  int n = snprintf(out, cap, "meshcore://contact/add?name=%s&public_key=%s&type=%d",
+                   enc, hexkey, ADV_TYPE_CHAT);
+  return (n > 0 && n < (int)cap) ? n : -1;
 }
 
 // To check if there is pending work

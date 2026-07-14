@@ -236,8 +236,10 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
     file.read((uint8_t *)&_prefs.buzzer_mode, sizeof(_prefs.buzzer_mode));                // 137 (0 for old files)
     file.read((uint8_t *)&_prefs.time_format, sizeof(_prefs.time_format));                // 138
     file.read((uint8_t *)&_prefs.utc_offset_min, sizeof(_prefs.utc_offset_min));          // 139
-    file.read((uint8_t *)&_prefs.eink_idle_refresh, sizeof(_prefs.eink_idle_refresh));    // 141 (0 for old files)
+    file.read(pad, 1);                                                                   // 141 (was eink_idle_refresh, now unused)
     file.read((uint8_t *)&_prefs.pkt_tones, sizeof(_prefs.pkt_tones));                    // 142 (0 for old files)
+    file.read((uint8_t *)&_prefs.advert_interval, sizeof(_prefs.advert_interval));        // 143 (0 for old files)
+    file.read((uint8_t *)&_prefs.advert_auto, sizeof(_prefs.advert_auto));                // 145 (0 for old files)
 
     file.close();
   }
@@ -281,8 +283,10 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
     file.write((uint8_t *)&_prefs.buzzer_mode, sizeof(_prefs.buzzer_mode));                // 137
     file.write((uint8_t *)&_prefs.time_format, sizeof(_prefs.time_format));                // 138
     file.write((uint8_t *)&_prefs.utc_offset_min, sizeof(_prefs.utc_offset_min));          // 139
-    file.write((uint8_t *)&_prefs.eink_idle_refresh, sizeof(_prefs.eink_idle_refresh));    // 141
+    file.write(pad, 1);                                                                   // 141 (was eink_idle_refresh, now unused)
     file.write((uint8_t *)&_prefs.pkt_tones, sizeof(_prefs.pkt_tones));                    // 142
+    file.write((uint8_t *)&_prefs.advert_interval, sizeof(_prefs.advert_interval));        // 143
+    file.write((uint8_t *)&_prefs.advert_auto, sizeof(_prefs.advert_auto));                // 145
 
     file.close();
   }

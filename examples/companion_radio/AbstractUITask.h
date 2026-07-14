@@ -27,6 +27,9 @@ protected:
   mesh::MainBoard* _board;
   BaseSerialInterface* _serial;
   bool _connected;
+  bool _rescue = false;   // CLI-rescue active: companion link is suspended
+  mutable uint16_t      _batt_mv = 0;     // cached battery reading (raw ADC is noisy per-call)
+  mutable unsigned long _batt_mv_at = 0;  // millis() of the last sample
 
   AbstractUITask(mesh::MainBoard* board, BaseSerialInterface* serial) : _board(board), _serial(serial) {
     _connected = false;
@@ -35,7 +38,18 @@ protected:
 public:
   void setHasConnection(bool connected) { _connected = connected; }
   bool hasConnection() const { return _connected; }
-  uint16_t getBattMilliVolts() const { return _board->getBattMilliVolts(); }
+  void setCLIRescue(bool r) { _rescue = r; }
+  bool isCLIRescue() const { return _rescue; }
+  // Re-sample at most every 5s: the raw ADC jitters a few mV per call, which -- now that the
+  // screen polls fast while awake -- would flip the displayed voltage/percent every refresh.
+  uint16_t getBattMilliVolts() const {
+    unsigned long now = millis();
+    if (_batt_mv == 0 || now - _batt_mv_at >= 5000) {
+      _batt_mv = _board->getBattMilliVolts();
+      _batt_mv_at = now;
+    }
+    return _batt_mv;
+  }
   bool isSerialEnabled() const { return _serial->isEnabled(); }
   void enableSerial() { _serial->enable(); }
   void disableSerial() { _serial->disable(); }
@@ -47,5 +61,8 @@ public:
   // PAYLOAD_TYPE_*. Not a user notification -- used for the RX activity LED and
   // the optional per-type packet tones. Default no-op so UIs can ignore it.
   virtual void onPacketRx(uint8_t ptype) {}
+  // Dump the current screen to a stream (e.g. the CLI-rescue console). fmt 0 = sixel,
+  // 1 = PBM. No-op unless the UI's display keeps a readable shadow.
+  virtual void dumpScreenshot(Print& out, int fmt) {}
   virtual void loop() = 0;
 };

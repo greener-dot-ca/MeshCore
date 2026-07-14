@@ -7,6 +7,7 @@
 #include <string.h>
 #include <math.h>     // great-circle math for the Nav page
 #include <RTClib.h>   // DateTime for the message read-view timestamp
+#include <qrcode.h>   // ricmoo/QRCode -- Home-screen self-advert QR
 
 #ifndef BATT_MIN_MILLIVOLTS
   #define BATT_MIN_MILLIVOLTS 3000
@@ -191,7 +192,14 @@ static void utcHalfToggle(const UIElement& e) {          // flip the 30-min part
   T(e)->setUtcOffsetMin((int16_t)(sign * mag));
 }
 static void advertCb(const UIElement& e)    { T(e)->doAdvert(); }
+static bool autoAdvGet(const UIElement& e)        { return T(e)->getAutoAdvert(); }
+static void autoAdvToggle(const UIElement& e)     { T(e)->toggleAutoAdvert(); }
+static const char* advIntervalText(const UIElement& e) { return T(e)->advertIntervalLabel(); }
+static void advIntervalNext(const UIElement& e)   { T(e)->cycleAdvertInterval(); }
+static bool advLocGet(const UIElement& e)         { return T(e)->getAdvertLoc(); }
+static void advLocToggle(const UIElement& e)      { T(e)->toggleAdvertLoc(); }
 static void helpCb(const UIElement& e)      { T(e)->showHelp(); }
+static void shareQRCb(const UIElement& e)   { T(e)->showQR(); }   // Home name -> self-advert QR
 static bool offGridGet(const UIElement& e)    { return T(e)->getOffGrid(); }
 static void offGridToggle(const UIElement& e) { T(e)->toggleOffGrid(); }
 static const char* const freqOpts[] = { "433", "869", "918" };
@@ -304,7 +312,7 @@ void SplashScreen::poll() {
 
 // ============================================================ HomeScreen
 HomeScreen::HomeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Home") {
-  _items[0] = makeLabel(prefs->node_name, nullptr, task);          // node name
+  _items[0] = makeAction(prefs->node_name, task, shareQRCb);       // node name -> QR of your key
   _items[1] = makeAction("Send Advert", task, advertCb);
   _items[2] = makeLabel("Messages", unreadText, task);
   _items[3] = makeLabel("Uptime",   uptimeText,  task);
@@ -317,12 +325,15 @@ HomeScreen::HomeScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, pre
 // Mesh-protocol traffic only; RF config + link readings moved to the Radio page.
 MeshScreen::MeshScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Mesh") {
   _items[0]  = makeAction("Send Advert", task, advertCb);
-  _items[1]  = makeLabel("Contacts", contactsText, task);
-  _items[2]  = makeLabel("Sent F/D", sentText,     task);
-  _items[3]  = makeLabel("Recv F/D", recvText,     task);
-  _items[4]  = makeLabel("Airtime",  airtimeText,  task);
-  _items[5]  = makeLabel("Queue",    queueText,    task);
-  _elems = _items; _count = 6;
+  _items[1]  = makeToggle("Auto advert", task, autoAdvGet, autoAdvToggle);
+  _items[2]  = makeCycleText("Every", task, advIntervalText, advIntervalNext);
+  _items[3]  = makeToggle("Share loc", task, advLocGet, advLocToggle);
+  _items[4]  = makeLabel("Contacts", contactsText, task);
+  _items[5]  = makeLabel("Sent F/D", sentText,     task);
+  _items[6]  = makeLabel("Recv F/D", recvText,     task);
+  _items[7]  = makeLabel("Airtime",  airtimeText,  task);
+  _items[8]  = makeLabel("Queue",    queueText,    task);
+  _elems = _items; _count = 9;
 }
 
 // ============================================================ RadioScreen
@@ -417,6 +428,31 @@ static const char* navBrgText(const UIElement& e) {
   return b;
 }
 
+// Below this ground speed the GPS course is unreliable, so we stay north-up and
+// hide the ETA (it would blow up toward infinity as speed -> 0).
+static const double NAV_MOVE_KMH = 1.5;
+
+static const char* navSpeedText(const UIElement& e) {
+  static char b[12];
+  double kmh, course;
+  if (!NV(e)->motion(kmh, course)) { strcpy(b, "--"); return b; }
+  sprintf(b, "%.1fkm/h", kmh);
+  return b;
+}
+static const char* navEtaText(const UIElement& e) {
+  static char b[10];
+  double kmh, course, dist, brg;
+  if (!NV(e)->motion(kmh, course) || kmh < NAV_MOVE_KMH || !NV(e)->targetVector(dist, brg)) {
+    strcpy(b, "--"); return b;
+  }
+  double secs = dist / (kmh / 3.6);                 // km/h -> m/s
+  if      (secs < 60)    sprintf(b, "%ds", (int)(secs + 0.5));
+  else if (secs < 3600)  sprintf(b, "%dm", (int)(secs / 60 + 0.5));
+  else if (secs < 86400) sprintf(b, "%.1fh", secs / 3600.0);
+  else                   strcpy(b, ">1d");
+  return b;
+}
+
 const char* NavScreen::targetName() {
   static char b[26];
   ContactInfo ci;
@@ -446,38 +482,71 @@ bool NavScreen::targetVector(double& dist_m, double& brg_deg) {
   return true;
 }
 
+// Live ground speed (km/h) + course (deg) from the GPS. Returns false with no live
+// valid fix or no speed field; course_deg is negative when the fix carries no course.
+bool NavScreen::motion(double& speed_kmh, double& course_deg) {
+  LocationProvider* l = sensors.getLocationProvider();
+  if (!l || !l->isValid()) return false;
+  long sp = l->getSpeed();                 // thousandths of a knot (negative if absent)
+  if (sp < 0) return false;
+  speed_kmh = sp * 0.001852;               // (knots/1000) * 1.852 km/h per knot
+  long co = l->getCourse();                // thousandths of a degree
+  course_deg = (co < 0) ? -1.0 : (co / 1000.0);
+  return true;
+}
+
 NavScreen::NavScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Nav") {
   _items[0] = makeCycleText("Target", this, navTargetText, navNextCb);
-  _items[1] = makeLabel("Dist", navDistText, this);
-  _items[2] = makeLabel("Brg",  navBrgText,  this);
-  _elems = _items; _count = 3;
+  _items[1] = makeLabel("Dist",  navDistText,  this);
+  _items[2] = makeLabel("Brg",   navBrgText,   this);
+  _items[3] = makeLabel("Speed", navSpeedText, this);
+  _items[4] = makeLabel("ETA",   navEtaText,   this);
+  _elems = _items; _count = 5;
 }
 
 int NavScreen::render(DisplayDriver& d) {
   int ret = ElementScreen::render(d);   // status bar, rows, page dots
 
-  // North-up compass rose in the band under the rows, all font glyphs at the
-  // page's regular 16px size: cardinal letters around an arrow pointing at the
-  // target's true bearing (8 sectors). "?" when there's no GPS fix or waypoint.
+  // Compass rose in the band under the rows, all font glyphs at the page's regular
+  // 16px size: a ring of cardinal letters around a centre arrow that points at the
+  // target. When moving (GPS course available above NAV_MOVE_KMH) the rose is
+  // heading-up -- "up" is the way you're travelling, the arrow shows which way to
+  // turn, and the N/E/S/W ring rotates to keep pointing at true north. Stationary
+  // (or no course) it falls back to north-up. "?" when there's no fix or waypoint.
   static const char* const arrows[8] = {
     "\xE2\x86\x91", "\xE2\x86\x97", "\xE2\x86\x92", "\xE2\x86\x98",   // ↑ ↗ → ↘
     "\xE2\x86\x93", "\xE2\x86\x99", "\xE2\x86\x90", "\xE2\x86\x96"    // ↓ ↙ ← ↖
   };
+  // ring offsets per 45° sector (0=up), elliptical to match text metrics (24px wide, 16 tall)
+  static const int RX[8] = { 0, 17, 24, 17, 0, -17, -24, -17 };
+  static const int RY[8] = { -16, -11, 0, 11, 16, 11, 0, -11 };
+
   double dist, brg;
   bool have = targetVector(dist, brg);
-  const char* mark = have ? arrows[((int)(brg / 45.0 + 0.5)) % 8] : "?";
+
+  double kmh, course;
+  bool heading_up = motion(kmh, course) && kmh >= NAV_MOVE_KMH && course >= 0;
+
+  double brg_shown = (heading_up && have) ? fmod(brg - course + 360.0, 360.0) : brg;
+  const char* mark = have ? arrows[((int)(brg_shown / 45.0 + 0.5)) % 8] : "?";
+
+  // where true north sits on the ring: top when north-up, rotated by -course when heading-up
+  double north_at = heading_up ? fmod(360.0 - course, 360.0) : 0.0;
+  int nsec = ((int)(north_at / 45.0 + 0.5)) % 8;
 
   const int cx = d.width() / 2;
-  const int rows_end = contentTop() + 3 * (UIELEM_ROW_H + 2 * UIELEM_PAD);
+  const int rows_end = contentTop() + _count * (UIELEM_ROW_H + 2 * UIELEM_PAD);
   const int cy = (rows_end + contentBottom()) / 2;   // center of the free band
+  const int by = cy - 8;                             // text baseline of the middle ring row
 
   d.setColor(DisplayDriver::LIGHT);
   d.setTextSize(1);
-  d.drawTextCentered(cx, cy - 8, mark);              // arrow, same 16px as the rows
-  d.drawTextCentered(cx, cy - 24, "N");              // one grid row up
-  d.drawTextCentered(cx, cy + 8,  "S");              // one grid row down
-  d.drawTextCentered(cx - 24, cy - 8, "W");          // three columns left/right
-  d.drawTextCentered(cx + 24, cy - 8, "E");
+  d.drawTextCentered(cx, by, mark);                  // centre arrow
+  static const char* const card[4] = { "N", "E", "S", "W" };
+  for (int k = 0; k < 4; k++) {
+    int s = (nsec + 2 * k) % 8;                       // N, then +90° each for E/S/W
+    d.drawTextCentered(cx + RX[s], by + RY[s], card[k]);
+  }
   return ret;
 }
 
@@ -784,6 +853,44 @@ int HelpScreen::render(DisplayDriver& d) {
   return 3600000;   // static: only repaints on interaction (which dismisses it)
 }
 
+// ============================================================ QRScreen
+// Full-screen QR of our "meshcore://contact/add?..." URL: another MeshCore user scans
+// it (phone app) to add us as a contact. Drawn black-on-white; the frame is already
+// cleared white by startFrame, and the centering margin doubles as the quiet zone.
+int QRScreen::render(DisplayDriver& d) {
+  d.setTextSize(1);
+  char uri[224];
+  int n = the_mesh.selfShareURI(uri, sizeof(uri));
+  if (n <= 0) {
+    d.setColor(DisplayDriver::LIGHT);
+    d.drawTextCentered(d.width() / 2, d.height() / 2 - 8, "No identity");
+    return 3600000;
+  }
+  // smallest version whose byte-mode / ECC-LOW capacity holds the URL
+  static const int cap_L[] = { 0, 17, 32, 53, 78, 106, 134, 154, 192, 232, 271, 321 };
+  int len = (int)strlen(uri), ver = 11;
+  for (int v = 1; v <= 11; v++) if (cap_L[v] >= len) { ver = v; break; }
+
+  static uint8_t qrbuf[512];   // >= qrcode_getBufferSize(11) (=466), the largest version we emit
+  QRCode qr;
+  qrcode_initText(&qr, qrbuf, ver, ECC_LOW, uri);
+
+  const int mods = qr.size;                        // modules per side
+  const int MARGIN = 16;                           // white quiet-zone margin (px)
+  int px = (d.height() - 2 * MARGIN) / mods;
+  if (px < 1) px = 1;
+  int dim = px * mods;
+  int ox = (d.width() - dim) / 2, oy = (d.height() - dim) / 2;
+
+  d.setColor(DisplayDriver::LIGHT);                // black modules
+  for (int y = 0; y < mods; y++)
+    for (int x = 0; x < mods; x++)
+      if (qrcode_getModule(&qr, x, y))
+        d.fillRect(ox + x * px, oy + y * px, px, px);
+
+  return 3600000;   // static until a press dismisses it
+}
+
 // ============================================================ ShutdownScreen
 // Power info page (manual hibernate was removed -- pointless on this board, since
 // waking is a cold boot and it wouldn't reach a genuinely low-power state).
@@ -807,32 +914,35 @@ RxLogScreen::RxLogScreen(UITask* task, NodePrefs* prefs)
 
 // Rebuilt every render from MyMesh's rx_log ring (newest first). Each row is a set
 // of fixed-width columns (Unifont is monospace, so printf padding lines them up):
-// "TY -rss/+sn VIA  Hh" with the relative age right-aligned (re-rendered each
-// refresh, so the ages stay current). VIA = the newest relay hashes this copy
-// travelled through (rightmost byte = the node we actually heard); the hops
-// column carries the full count, so older relays are simply cut. Direct from the
-// origin: the origin's key byte / channel hash. "--" when the type carries no
-// identity at all (direct ACK etc). Rows are 19 chars max beside the age column,
-// so via gets 2 bytes -- 1 if the hop count ever needs two digits.
+// "TY -rss/+sn LH  Hh" with the relative age right-aligned (re-rendered each
+// refresh, so the ages stay current). LH = the last hop: the full path hash of the
+// node whose transmission we actually heard. A hop is hop_bytes wide (the network's
+// path-hash-size setting, 1..4 bytes), so we print the last hop_bytes of via[] as
+// one contiguous fingerprint -- "FE" on a 1-byte network, "EEEEFE" on a 3-byte one,
+// always a single relay. The hops column carries the full path length. Direct from
+// the origin (0 hops): the origin's key byte / channel hash. "--" when the type
+// carries no identity at all (direct ACK etc).
 void RxLogScreen::rebuild() {
   static RxLogEntry rx[RX_LOG_SIZE];                   // transient scratch (single-threaded)
   int got = the_mesh.getRxLog(rx, RX_LOG_SIZE);
+  const int via_w = 6;   // always pad the last-hop to 3 bytes (6 hex), right-justified, so the
+                         // hop-count column stays fixed regardless of what's in view
   int n = 0;
   for (int i = 0; i < got; i++) {
     const RxLogEntry& e = rx[i];
-    int max_b = (e.hops > 9) ? 1 : 2;
-    int nb = (e.via_len < max_b) ? e.via_len : max_b;
-    char via[6];
+    int hb = e.hop_bytes ? e.hop_bytes : 1;                   // path hash size: bytes per hop
+    int nb = (e.via_len < hb) ? e.via_len : hb;               // the last hop = its whole hash
+    char via[12];
     if (nb > 0) {
       char* p = via;
       for (int k = e.via_len - nb; k < e.via_len; k++) p += sprintf(p, "%02X", e.via[k]);
     } else if (e.key0 >= 0) {
-      sprintf(via, "%02X", (unsigned)e.key0);   // straight from the origin
+      sprintf(via, "%02X", (unsigned)e.key0);                 // straight from the origin (0 hops)
     } else {
       strcpy(via, "--");
     }
-    snprintf(_rows[n].line, sizeof(_rows[n].line), "%s %4d/%+3d %-4s %uh",
-             rxTypeLabel(e.ptype), (int)e.rssi, (int)e.snr, via, (unsigned)e.hops);
+    snprintf(_rows[n].line, sizeof(_rows[n].line), "%s %4d/%+3d %*s %uh",
+             rxTypeLabel(e.ptype), (int)e.rssi, (int)e.snr, via_w, via, (unsigned)e.hops);
     relTime(_rows[n].time, sizeof(_rows[n].time), e.timestamp);
     _refs[n].scr = this; _refs[n].idx = n;
     _items[n] = makeMessageRow(_rows[n].line, &_refs[n], rxRowTime, rxRowNoop);

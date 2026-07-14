@@ -199,8 +199,12 @@ void ElementScreen::drawStatusBar(DisplayDriver& d) {
 
   // status icons (BLE-off / app / GPS / muted) as Unifont symbols, right-justified before battery
   const char* icons[4]; DisplayDriver::Color col[4]; int ni = 0;
-  if (!_task->isSerialEnabled()) { icons[ni] = "\xF0\x9F\x93\xB5"; col[ni] = DisplayDriver::RED; ni++; } // 📵 BLE off
-  if (_task->hasConnection()) { icons[ni] = "\xF0\x9F\x93\xB1"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📱
+  if (_task->isCLIRescue()) {                    // in CLI rescue the companion link is suspended:
+    icons[ni] = "\xF0\x9F\x94\xA7"; col[ni] = DisplayDriver::RED; ni++; // 🔧 show that, not a false "connected"
+  } else {
+    if (!_task->isSerialEnabled()) { icons[ni] = "\xF0\x9F\x93\xB5"; col[ni] = DisplayDriver::RED; ni++; } // 📵 BLE off
+    if (_task->hasConnection()) { icons[ni] = "\xF0\x9F\x93\xB1"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📱
+  }
   if (_task->getGPSState())   { icons[ni] = "\xF0\x9F\x93\x8D"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📍
 #ifdef PIN_BUZZER
   if (_task->isBuzzerQuiet())  { icons[ni] = "\xF0\x9F\x94\x87"; col[ni] = DisplayDriver::RED;  ni++; } // 🔇
@@ -224,10 +228,10 @@ void ElementScreen::drawStatusBar(DisplayDriver& d) {
 // Bottom bar: one glyph per page (in PAGE_* order), the current page shown
 // reverse-video. Keep this array in sync with the enum in Pages.h.
 static const char* const PAGE_ICONS[] = {
-  "\xE2\x8C\x82",       // PAGE_HOME       ⌂ house
+  "\xF0\x9F\x8F\xA0",   // PAGE_HOME       🏠 house
   "\xE2\x9C\x89",       // PAGE_MESSAGES   ✉ envelope
   "\xF0\x9F\x93\xA1",   // PAGE_MESH       📡 antenna
-  "\xE2\x96\xA4",       // PAGE_RXLOG      ▤ list
+  "\xF0\x9F\x93\xA5",   // PAGE_RXLOG      📥 inbox (RX)
   "\xF0\x9F\x93\xBB",   // PAGE_RADIO      📻 radio
   "\xF0\x9F\x93\x8D",   // PAGE_GPS        📍 pin
   "\xF0\x9F\xA7\xAD",   // PAGE_NAV        🧭 compass

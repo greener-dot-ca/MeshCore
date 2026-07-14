@@ -50,6 +50,16 @@ class NativeEinkDisplay : public DisplayDriver {
   void swingClear();   // cycle every pixel black->white to flush ghosting (crisp, no speckle)
   int  blitGlyph(uint32_t cp, int x, int y, int scale);   // returns advance width (px)
 
+  // 1-bit shadow of the panel (bit set = black ink), mirrored from every draw op so the
+  // current frame can be dumped for screenshots without reading GxEPD2's private buffer.
+  static const int SS_W = 200, SS_H = 200, SS_STRIDE = SS_W / 8;
+  uint8_t _shadow[SS_STRIDE * SS_H];
+  void shadowClear(bool ink);                          // fill whole shadow
+  void shadowPix(int x, int y, bool ink);              // one pixel (bounds-checked)
+  void shadowFill(int x, int y, int w, int h, bool ink);
+  void shadowRect(int x, int y, int w, int h, bool ink);   // 1px outline
+  bool shadowInk(int x, int y) const;                  // read a pixel
+
 public:
   // Meshtastic's GxEPD2 fork takes the SPI bus in the constructor (no selectSPI()); the
   // M1 drives the panel on the variant's secondary bus, SPI1.
@@ -77,4 +87,5 @@ public:
   // UTF-8 is rendered directly by print(); pass it through untouched.
   void translateUTF8ToBlocks(char* dest, const char* src, size_t dest_size) override;
   void endFrame() override;
+  void screenshot(Print& out, int fmt) override;   // fmt 0 = sixel, 1 = PBM P1
 };

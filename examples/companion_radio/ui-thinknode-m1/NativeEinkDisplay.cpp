@@ -44,10 +44,37 @@ static const char* utf8Next(const char* p, uint32_t& cp) {
   return p;
 }
 
+// ---- 1-bit shadow framebuffer (mirrors every draw op for screenshots) ------------
+
+void NativeEinkDisplay::shadowClear(bool ink) {
+  memset(_shadow, ink ? 0xFF : 0x00, sizeof(_shadow));
+}
+void NativeEinkDisplay::shadowPix(int x, int y, bool ink) {
+  if ((unsigned)x >= (unsigned)SS_W || (unsigned)y >= (unsigned)SS_H) return;
+  uint8_t& b = _shadow[y * SS_STRIDE + (x >> 3)];
+  uint8_t m = 0x80 >> (x & 7);
+  if (ink) b |= m; else b &= ~m;
+}
+void NativeEinkDisplay::shadowFill(int x, int y, int w, int h, bool ink) {
+  for (int j = 0; j < h; j++)
+    for (int i = 0; i < w; i++) shadowPix(x + i, y + j, ink);
+}
+void NativeEinkDisplay::shadowRect(int x, int y, int w, int h, bool ink) {
+  if (w <= 0 || h <= 0) return;
+  for (int i = 0; i < w; i++) { shadowPix(x + i, y, ink); shadowPix(x + i, y + h - 1, ink); }
+  for (int j = 0; j < h; j++) { shadowPix(x, y + j, ink); shadowPix(x + w - 1, y + j, ink); }
+}
+bool NativeEinkDisplay::shadowInk(int x, int y) const {
+  if ((unsigned)x >= (unsigned)SS_W || (unsigned)y >= (unsigned)SS_H) return false;
+  return _shadow[y * SS_STRIDE + (x >> 3)] & (0x80 >> (x & 7));
+}
+
 int NativeEinkDisplay::blitGlyph(uint32_t cp, int x, int y, int scale) {
+  bool ink = (_curr_color == GxEPD_BLACK);
   int idx = uniLookup(cp);
   if (idx < 0) {                               // missing: hollow box placeholder
     display.drawRect(x, y + 2 * scale, 7 * scale, 11 * scale, _curr_color);
+    shadowRect(x, y + 2 * scale, 7 * scale, 11 * scale, ink);
     return 8 * scale;
   }
   int w = unifont_w[idx];                      // 8 or 16
@@ -56,8 +83,9 @@ int NativeEinkDisplay::blitGlyph(uint32_t cp, int x, int y, int scale) {
   for (int r = 0; r < UNIFONT_ROWS; r++) {
     for (int c = 0; c < w; c++) {
       if (unifont_bits[off + r * rowbytes + (c >> 3)] & (0x80 >> (c & 7))) {
-        if (scale == 1) display.drawPixel(x + c, y + r, _curr_color);
-        else            display.fillRect(x + c * scale, y + r * scale, scale, scale, _curr_color);
+        if (scale == 1) { display.drawPixel(x + c, y + r, _curr_color); shadowPix(x + c, y + r, ink); }
+        else            { display.fillRect(x + c * scale, y + r * scale, scale, scale, _curr_color);
+                          shadowFill(x + c * scale, y + r * scale, scale, scale, ink); }
       }
     }
   }
@@ -75,6 +103,7 @@ bool NativeEinkDisplay::begin() {
   // after init to a full one, giving a clean white baseline.
   display.setPartialWindow(0, 0, display.width(), display.height());
   display.fillScreen(GxEPD_WHITE);
+  shadowClear(false);
   display.display(true);
   _partial_count = 0;
   _hibernate_pending = true;   // panel powered after any refresh; sleep it once idle
@@ -110,6 +139,7 @@ void NativeEinkDisplay::turnOff() {
 
 void NativeEinkDisplay::clear() {
   display.fillScreen(GxEPD_WHITE);
+  shadowClear(false);
 }
 
 void NativeEinkDisplay::startFrame(Color bkg) {
@@ -122,6 +152,7 @@ void NativeEinkDisplay::startFrame(Color bkg) {
     last_display_crc_value = 0;   // force endFrame to repaint after the clear
   }
   display.fillScreen(GxEPD_WHITE);
+  shadowClear(false);
   _curr_color = GxEPD_BLACK;
   display_crc.reset();
 }
@@ -162,6 +193,7 @@ void NativeEinkDisplay::fillRect(int x, int y, int w, int h) {
   display_crc.update<int>(w); display_crc.update<int>(h);
   display_crc.update<uint16_t>(_curr_color);
   display.fillRect(x, y, w, h, _curr_color);
+  shadowFill(x, y, w, h, _curr_color == GxEPD_BLACK);
 }
 
 void NativeEinkDisplay::drawRect(int x, int y, int w, int h) {
@@ -169,6 +201,7 @@ void NativeEinkDisplay::drawRect(int x, int y, int w, int h) {
   display_crc.update<int>(w); display_crc.update<int>(h);
   display_crc.update<uint16_t>(_curr_color);
   display.drawRect(x, y, w, h, _curr_color);
+  shadowRect(x, y, w, h, _curr_color == GxEPD_BLACK);
 }
 
 // 1:1 blit of an MSB-first bitmap (bit 0x80 = leftmost), matching the project's
@@ -177,11 +210,14 @@ void NativeEinkDisplay::drawXbm(int x, int y, const uint8_t* bits, int w, int h)
   display_crc.update<int>(x); display_crc.update<int>(y);
   display_crc.update<uint8_t>(bits, (w * h + 7) / 8);
   display_crc.update<uint16_t>(_curr_color);
+  bool ink = (_curr_color == GxEPD_BLACK);
   int rowbytes = (w + 7) / 8;
   for (int by = 0; by < h; by++) {
     for (int bx = 0; bx < w; bx++) {
-      if (bits[by * rowbytes + (bx >> 3)] & (0x80 >> (bx & 7)))
+      if (bits[by * rowbytes + (bx >> 3)] & (0x80 >> (bx & 7))) {
         display.drawPixel(x + bx, y + by, _curr_color);
+        shadowPix(x + bx, y + by, ink);
+      }
     }
   }
 }
@@ -234,6 +270,57 @@ void NativeEinkDisplay::endFrame() {
   _hibernate_at = millis() + EINK_HIBERNATE_IDLE_MILLIS;
   _partial_count++;
   last_display_crc_value = crc;
+}
+
+// Run-length emit of one sixel byte (0x3F..0x7E): "!<count><ch>" when it pays off.
+static void sixelRun(Print& out, int ch, int cnt) {
+  if (cnt <= 0 || ch < 0) return;
+  if (cnt >= 4) { out.write('!'); out.print(cnt); out.write((uint8_t)ch); }
+  else for (int i = 0; i < cnt; i++) out.write((uint8_t)ch);
+}
+
+// Dump the shadow. fmt 1 = PBM P1: a pure-ASCII 1-bit image file (1 = black). Redirect
+// it to a .pbm and convert/view offline -- no terminal image support needed.
+// Otherwise (fmt 0) = 2-colour black-on-white sixel, rendered inline in a sixel-capable
+// terminal (iTerm2/WezTerm/foot/mlterm), ~a few KB after RLE.
+void NativeEinkDisplay::screenshot(Print& out, int fmt) {
+  if (fmt == 1) {
+    out.print("P1\n200 200\n");
+    char line[SS_W + 1];
+    for (int y = 0; y < SS_H; y++) {
+      for (int x = 0; x < SS_W; x++) line[x] = shadowInk(x, y) ? '1' : '0';
+      line[SS_W] = 0;
+      out.print(line);
+      out.write('\n');
+    }
+    return;
+  }
+  out.print("\x1b" "Pq");                    // DCS q  -> begin sixel
+  out.print("\"1;1;200;200");                // raster attrs: 1:1 pixels, 200x200
+  out.print("#0;2;0;0;0");                   // palette 0 = black
+  out.print("#1;2;100;100;100");             // palette 1 = white
+  for (int y0 = 0; y0 < SS_H; y0 += 6) {
+    for (int c = 0; c < 2; c++) {            // colour 0 (black), then 1 (white)
+      out.print(c == 0 ? "#0" : "#1");
+      int run = -1, cnt = 0;
+      for (int x = 0; x < SS_W; x++) {
+        int bits = 0;
+        for (int i = 0; i < 6; i++) {
+          int y = y0 + i;
+          if (y >= SS_H) break;
+          bool on = (c == 0) ? shadowInk(x, y) : !shadowInk(x, y);
+          if (on) bits |= (1 << i);
+        }
+        int ch = 0x3F + bits;
+        if (ch == run) cnt++;
+        else { sixelRun(out, run, cnt); run = ch; cnt = 1; }
+      }
+      sixelRun(out, run, cnt);
+      out.write(c == 0 ? '$' : '-');         // $ = overlay next colour; - = next band
+    }
+  }
+  out.print("\x1b" "\\");                     // ST -> end sixel
+  out.print("\r\n");
 }
 
 // Called every app-loop pass. Deep sleep mode 1 retains controller RAM, so the

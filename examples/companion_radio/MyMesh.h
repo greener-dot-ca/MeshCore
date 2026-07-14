@@ -97,8 +97,9 @@ struct RxLogEntry {
   uint8_t  hops;        // path hash count (relays so far)
   uint8_t  flood;       // 1 = flood route, 0 = direct
   int16_t  key0;        // first byte of origin key / channel hash, -1 if the type has none
-  uint8_t  via[3];      // trailing path bytes: relays heard, oldest..newest (newest = transmitter)
-  uint8_t  via_len;     // 0..3 bytes valid in via[] (0: direct from origin, or TRACE)
+  uint8_t  via[4];      // trailing path bytes: relays heard, oldest..newest (newest = transmitter)
+  uint8_t  via_len;     // 0..4 bytes valid in via[] (0: direct from origin, or TRACE)
+  uint8_t  hop_bytes;   // path hash size: bytes per hop (1..4), so the last hop = last hop_bytes of via[]
 };
 
 class MyMesh : public BaseChatMesh, public DataStoreHost {
@@ -116,6 +117,8 @@ public:
   void loop();
   void handleCmdFrame(size_t len);
   bool advert();
+  void rescheduleAutoAdvert();     // (re)arm the periodic self-advert timer from _prefs
+  int  selfShareURI(char* out, size_t cap);   // "meshcore://contact/add?..." for the Home-screen QR
   void enterCLIRescue();
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
@@ -262,6 +265,7 @@ private:
   uint8_t *sign_data;
   uint32_t sign_data_len;
   unsigned long dirty_contacts_expiry;
+  unsigned long next_advert_millis;   // when the next periodic self-advert fires (0 = disarmed)
 
   TransportKey send_scope;
 

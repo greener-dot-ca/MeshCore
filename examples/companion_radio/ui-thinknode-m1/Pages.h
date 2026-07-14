@@ -43,7 +43,7 @@ public:
 };
 
 class MeshScreen : public ElementScreen {
-  UIElement _items[6];
+  UIElement _items[9];
 protected:
   int pageIndex() const override { return PAGE_MESH; }
   int pageCount() const override { return PAGE_COUNT; }
@@ -79,7 +79,7 @@ public:
 // glyphs (the M1 has no magnetometer, so N is always up -- orient the device like
 // a map). Distance/bearing use the same haversine math as Meshtastic's GeoCoord.
 class NavScreen : public ElementScreen {
-  UIElement _items[3];
+  UIElement _items[5];
   int _target = 0;    // index among the favourite contacts that have a location
 protected:
   int pageIndex() const override { return PAGE_NAV; }
@@ -90,6 +90,7 @@ public:
   const char* targetName();                            // current waypoint name ("--" if none)
   void nextTarget();                                   // cycle to the next located contact
   bool targetVector(double& dist_m, double& brg_deg);  // false if no fix or no waypoint
+  bool motion(double& speed_kmh, double& course_deg);  // live GPS speed/course; course_deg<0 if not moving
 };
 
 class BluetoothScreen : public ElementScreen {
@@ -219,6 +220,13 @@ public:
 class HelpScreen : public UIScreen {
 public:
   HelpScreen() {}
+  int render(DisplayDriver& display) override;
+};
+
+// Full-screen QR of our self-advert URL (share your key). Any press dismisses.
+class QRScreen : public UIScreen {
+public:
+  QRScreen() {}
   int render(DisplayDriver& display) override;
 };
 

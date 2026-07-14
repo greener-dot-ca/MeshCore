@@ -65,6 +65,7 @@ class UITask : public AbstractUITask {
   MessagesScreen*      _messages;
   MessageDetailScreen* _detail;
   HelpScreen*          _help;
+  QRScreen*            _qr;
 
   // triple-click pops up the help overlay; any press returns here
   UIScreen*            _help_return = NULL;
@@ -101,11 +102,13 @@ public:
     _messages = NULL;
     _detail = NULL;
     _help = NULL;
+    _qr = NULL;
   }
   void begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* node_prefs);
 
   void gotoHomeScreen();
   void showHelp();               // pop up the help overlay (remembers where to return)
+  void showQR();                 // pop up the self-advert QR overlay (share your key)
   void openMessageAt(int idx);   // show the read view for list message `idx`
   void navMessage(int delta);    // step to another message while in the read view
   void showAlert(const char* text, int duration_millis);
@@ -140,6 +143,13 @@ public:
   bool getGPSState();
   void toggleGPS();
   void doAdvert();
+  // ---- periodic self-advert (Mesh page) ----
+  bool getAutoAdvert() const;              // is auto-advert enabled?
+  void toggleAutoAdvert();                 // enable/disable (persist + rearm timer)
+  const char* advertIntervalLabel() const; // current interval as "15m"/"1h" etc.
+  void cycleAdvertInterval();              // step to the next preset interval (persist + rearm)
+  bool getAdvertLoc() const;               // is location shared in adverts?
+  void toggleAdvertLoc();                  // flip advert_loc_policy (persist)
   void forceFullRefresh();                 // full e-ink refresh to clear partial-update ghosting
   bool getOffGrid() const;                 // "off-grid" = client-repeat (this node also relays)
   void toggleOffGrid();
@@ -151,6 +161,7 @@ public:
   void newMsg(uint8_t path_len, const char* from_name, const char* text, int msgcount) override;
   void notify(UIEventType t = UIEventType::none) override;
   void onPacketRx(uint8_t ptype) override;   // RX activity LED + optional per-type tone
+  void dumpScreenshot(Print& out, int fmt) override { if (_display) _display->screenshot(out, fmt); }
   void loop() override;
 
   void shutdown();   // low-battery auto power-off

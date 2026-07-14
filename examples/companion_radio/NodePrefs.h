@@ -38,5 +38,6 @@ struct NodePrefs {  // persisted to file
   uint8_t autoadd_max_hops;  // 0 = no limit, 1 = direct (0 hops), N = up to N-1 hops (max 64)
   char default_scope_name[31];
   uint8_t default_scope_key[16];
-  uint8_t eink_idle_refresh;  // M1 e-ink idle re-draw: 0 = full (default), 1 = partial
+  uint16_t advert_interval;   // auto-advert interval in minutes (0 = unset, treated as default)
+  uint8_t  advert_auto;       // 1 = periodic self-advert enabled
 };
