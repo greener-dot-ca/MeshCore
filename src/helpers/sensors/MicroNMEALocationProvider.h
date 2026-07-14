@@ -124,6 +124,8 @@ public :
         nmea.getAltitude(alt);
         return alt;
     }
+    long getCourse() override { return nmea.getCourse(); }   // thousandths of a degree (LONG_MIN if none)
+    long getSpeed() override { return nmea.getSpeed(); }      // thousandths of a knot  (LONG_MIN if none)
     long satellitesCount() override { return nmea.getNumSatellites(); }
     bool isValid() override { return nmea.isValid(); }
 

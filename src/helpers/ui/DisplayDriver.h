@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 
+class Print;   // Arduino Print, forward-declared to keep this header Arduino-free
+
 class DisplayDriver {
   int _w, _h;
 protected:
@@ -99,4 +101,9 @@ public:
   }
   
   virtual void endFrame() = 0;
+
+  // Dump the current frame to a stream. fmt 0 = sixel (inline terminal image),
+  // 1 = PBM P1 (ASCII image file, redirect to .pbm). No-op unless the driver keeps a
+  // readable shadow of what it drew.
+  virtual void screenshot(Print& out, int fmt) {}
 };

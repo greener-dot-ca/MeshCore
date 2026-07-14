@@ -13,6 +13,11 @@ public:
     virtual long getLatitude() = 0;
     virtual long getLongitude() = 0;
     virtual long getAltitude() = 0;
+    // Course over ground (thousandths of a degree, clockwise from North) and speed
+    // (thousandths of a knot). Default: unavailable (negative) for providers that
+    // don't parse them.
+    virtual long getCourse() { return -1; }
+    virtual long getSpeed()  { return -1; }
     virtual long satellitesCount() = 0;
     virtual bool isValid() = 0;
     virtual long getTimestamp() = 0;
