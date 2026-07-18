@@ -41,6 +41,9 @@ class UITask : public AbstractUITask {
   float _saved_freq;       // freq before off-grid was enabled, restored on disable (0 = none)
   char _alert[80];
   unsigned long _alert_expiry;
+  static const int MSG_POPUP_MAXLINES = 9;   // near-full-screen box: sender + up to 8 wrapped lines
+  char _mpop[MSG_POPUP_MAXLINES][28];
+  int  _mpop_n = 0;
   int _msgcount;
   unsigned long ui_started_at, next_batt_chck;
 #ifdef PIN_STATUS_LED
@@ -111,10 +114,12 @@ public:
   void showQR();                 // pop up the self-advert QR overlay (share your key)
   void openMessageAt(int idx);   // show the read view for list message `idx`
   void navMessage(int delta);    // step to another message while in the read view
-  void showAlert(const char* text, int duration_millis);
+  void showAlert(const char* text, int duration_millis = 1500);
+  void buildMsgPopup(const char* from, const char* text);   // sender + wrapped preview into _mpop
   int  getMsgCount() const { return _msgcount; }
   uint32_t currentEpoch() const;   // device clock (UTC epoch secs, 0 if unset)
   bool hasDisplay() const { return _display != NULL; }
+  NodePrefs* nodePrefs() const { return _node_prefs; }   // for shared chrome (clock format)
 
   bool isBuzzerQuiet() {
 #ifdef PIN_BUZZER

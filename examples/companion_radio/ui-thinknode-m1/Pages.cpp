@@ -139,12 +139,12 @@ static bool bleGet(const UIElement& e)    { return T(e)->isSerialEnabled(); }
 static void bleToggle(const UIElement& e) {
   UITask* t = T(e);
   if (t->isSerialEnabled()) t->disableSerial(); else t->enableSerial();
-  t->showAlert(t->isSerialEnabled() ? "BLE: ON" : "BLE: OFF", 800);
+  t->showAlert(t->isSerialEnabled() ? "BLE: ON" : "BLE: OFF");
 }
 static void bleDisconnectCb(const UIElement& e) {   // drop the link so another device can pair/connect
   UITask* t = T(e);
   t->disconnectSerial();
-  t->showAlert(t->hasConnection() ? "Disconnecting.." : "Not connected", 800);
+  t->showAlert(t->hasConnection() ? "Disconnecting.." : "Not connected");
 }
 static bool buzzerGet(const UIElement& e)    { return !T(e)->isBuzzerQuiet(); }
 static void buzzerToggle(const UIElement& e) { T(e)->toggleBuzzer(); }
@@ -589,8 +589,19 @@ MessagesScreen::MessagesScreen(UITask* task, NodePrefs* prefs)
 // so counts are accurate (cheap relative to the e-ink refresh cadence).
 void MessagesScreen::rebuild() {
   switch (_level) {
-    case L_MSGS:  rebuildMessages(); break;
-    default:      rebuildConversations(); break;
+    case L_MSGS: {
+      // depth chevron (option C): "‹ #general" -- the ‹ marks that there's a parent
+      // (triangle-hold pops back up to the conversation list).
+      const char* pfx = (_sel_is_channel && _sel_conv[0] != '#') ? "#" : "";
+      snprintf(_crumb, sizeof(_crumb), "\xE2\x80\xB9 %s%s", pfx, _sel_conv);  // ‹
+      _title = _crumb;
+      rebuildMessages();
+      break;
+    }
+    default:
+      _title = "Msgs";
+      rebuildConversations();
+      break;
   }
 }
 
@@ -736,9 +747,11 @@ static int wrapText(DisplayDriver& d, int max_w, const char* g,
   return nl;
 }
 
-static const int MD_BODY_TOP = 32;   // row 2, below the 2-row header (name + date/time)
-static const int MD_BOTTOM   = 192;  // 12 rows on the 200px panel (no page bar here)
-static int mdLinesPerPage() { return (MD_BOTTOM - MD_BODY_TOP) / UIELEM_ROW_H; }
+// The body fills the content rows; the last content row (just above the bottom icon rule)
+// is the compact date/route meta line.
+static int mdMetaY()        { return uichrome::contentBottom() - UIELEM_ROW_H; }
+static int mdBodyTop()      { return uichrome::contentTop(); }
+static int mdLinesPerPage() { return (mdMetaY() - mdBodyTop()) / UIELEM_ROW_H; }
 
 bool MessageDetailScreen::scrollDown() {
   int per = mdLinesPerPage();
@@ -749,49 +762,52 @@ bool MessageDetailScreen::scrollDown() {
 int MessageDetailScreen::render(DisplayDriver& d) {
   d.setTextSize(1);
 
-  // header line 1: breadcrumb. For a channel message the sender's node name is
-  // embedded in the body as a "Name: " prefix (out.sender holds the *channel*
-  // name); lift it onto the header as "#channel node" (channel first) so the body
-  // stays clean -- which lets ASCII art render. Direct messages already have the
-  // node name in out.sender and a clean body.
+  // Fits the overall UI chrome: the title is just the sender's node name (the ‹ marks the
+  // depth), the page-icon bar sits in the bottom rule (like every screen), the word-
+  // wrapped body fills the content rows, and a compact date/route single-line rule sits
+  // just above the icon bar.
+  //
+  // For a channel message the sender's node name is embedded in the body as a "Name: "
+  // prefix (_msg.sender holds the *channel* name); use just that node name as the title
+  // and strip the prefix off the body (keeps the body clean so ASCII art renders). Direct
+  // messages already have the node name in _msg.sender and a clean body.
   const char* body = _msg.body;
-  char hdr[56];
+  char hdr[40];
   if (_msg.is_channel) {
-    const char* chan = _msg.sender;
     const char* sep = strstr(_msg.body, ": ");
     if (sep) {
-      char who[28]; int n = (int)(sep - _msg.body);
-      if (n > (int)sizeof(who) - 1) n = sizeof(who) - 1;
-      memcpy(who, _msg.body, n); who[n] = 0;
-      snprintf(hdr, sizeof(hdr), "%s%s %s", chan[0] == '#' ? "" : "#", chan, who);
+      int n = (int)(sep - _msg.body);
+      if (n > (int)sizeof(hdr) - 1) n = sizeof(hdr) - 1;
+      memcpy(hdr, _msg.body, n); hdr[n] = 0;           // node name (the "who" before ": ")
       body = sep + 2;                                   // body after the "Name: " prefix
     } else {
-      snprintf(hdr, sizeof(hdr), "%s%s", chan[0] == '#' ? "" : "#", chan);
+      snprintf(hdr, sizeof(hdr), "%s", _msg.sender);    // fall back to the channel name
     }
   } else {
-    snprintf(hdr, sizeof(hdr), "%s", _msg.sender);
+    snprintf(hdr, sizeof(hdr), "%s", _msg.sender);      // DM: the sender node
   }
-  char hb[64];
-  d.setColor(DisplayDriver::GREEN);
-  d.translateUTF8ToBlocks(hb, hdr, sizeof(hb));
-  d.drawTextEllipsized(0, 0, d.width(), hb);            // row 0
+  char title[48];
+  snprintf(title, sizeof(title), "\xE2\x80\xB9 %s", hdr);   // ‹ node name
 
-  // header row 1: "<date> - <route>" (date honors the Time page format + offset)
-  char date[24], when[40];
+  // compact meta line: "mm/dd HH:MM │ <route>" (date honors the Time page format + offset);
+  // fields separated by a line-drawing │ (U+2502)
+  char date[24], sub[48];
   _task->formatDateTime(_msg.timestamp, date, sizeof(date));
   if (_msg.is_direct) {
-    snprintf(when, sizeof(when), "%s - Direct", date);
+    snprintf(sub, sizeof(sub), "%s \xE2\x94\x82 Direct", date);      // │
   } else {
-    // "date - <hops>h - <bytes-per-repeater-hash>b" (hash size = top 2 bits of path_len)
-    unsigned hash_bytes = (_msg.path_len >> 6) + 1;
-    snprintf(when, sizeof(when), "%s - %uh - %ub", date, (unsigned)_msg.hops, hash_bytes);
+    snprintf(sub, sizeof(sub), "%s \xE2\x94\x82 %uh", date, (unsigned)_msg.hops);
   }
-  d.setColor(DisplayDriver::LIGHT);
-  d.setCursor(0, UIELEM_ROW_H);                         // row 1
-  d.print(when);
 
-  // body from row 2, word-wrapped; reserve the last column for the glyph scrollbar.
-  // Translate to display glyphs once so wrap widths match drawing (UTF-8 safe).
+  // chrome: status cluster + top-rule title, page icons in the bottom rule
+  int cluster_left = uichrome::statusCluster(d, _task, _task->nodePrefs());
+  uichrome::rule(d, uichrome::frameTop(), title, cluster_left);
+  uichrome::bottomBar(d, PAGE_MESSAGES, PAGE_COUNT);
+
+  // date/route as a single-line ─┤ ... ├─ rule, just above the icon bar
+  uichrome::ruleThin(d, mdMetaY(), sub, d.width());
+
+  // body from the top of the content, word-wrapped; reserve the last column for the thumb.
   const int cw = d.width() - GRID_COL;
   char lines[WRAP_MAX_LINES][WRAP_LINE_CAP];
   char body_glyphs[MAX_FRAME_SIZE];
@@ -799,25 +815,25 @@ int MessageDetailScreen::render(DisplayDriver& d) {
   _total_lines = wrapText(d, cw, body_glyphs, lines, WRAP_MAX_LINES);
   if (_scroll_line >= _total_lines) _scroll_line = 0;
 
+  const int top = mdBodyTop();
   const int per = mdLinesPerPage();
   d.setColor(DisplayDriver::LIGHT);
   for (int i = 0; i < per && (_scroll_line + i) < _total_lines; i++) {
-    d.setCursor(0, MD_BODY_TOP + i * UIELEM_ROW_H);     // first column
-    d.print(lines[_scroll_line + i]);                   // already glyph-translated
+    d.setCursor(0, top + i * UIELEM_ROW_H);            // first column
+    d.print(lines[_scroll_line + i]);                  // already glyph-translated
   }
 
-  // glyph scrollbar (body position) in the last column when the body overflows.
+  // trackless glyph thumb (body position) in the last column when the body overflows
   if (_total_lines > per) {
-    static const char* const TRACK = "\xE2\x94\x82";    // │
-    static const char* const THUMB = "\xE2\x96\x88";    // █
-    int gw = d.getTextWidth(TRACK);
-    int sx = d.width() - gw;
+    static const char* const THUMB = "\xE2\x96\x88";   // █
+    int sx = d.width() - GRID_COL;
     int thumb_cells = per * per / _total_lines;  if (thumb_cells < 1) thumb_cells = 1;
     int max_line = _total_lines - per;
     int thumb_start = max_line > 0 ? (_scroll_line * (per - thumb_cells) + max_line / 2) / max_line : 0;
-    for (int i = 0; i < per; i++) {
-      d.setCursor(sx, MD_BODY_TOP + i * UIELEM_ROW_H);
-      d.print((i >= thumb_start && i < thumb_start + thumb_cells) ? THUMB : TRACK);
+    d.setColor(DisplayDriver::LIGHT);
+    for (int i = thumb_start; i < thumb_start + thumb_cells && i < per; i++) {
+      d.setCursor(sx, top + i * UIELEM_ROW_H);
+      d.print(THUMB);
     }
   }
   return 10000;   // e-ink: repaint only on interaction
@@ -941,7 +957,7 @@ void RxLogScreen::rebuild() {
     } else {
       strcpy(via, "--");
     }
-    snprintf(_rows[n].line, sizeof(_rows[n].line), "%s %4d/%+3d %*s %uh",
+    snprintf(_rows[n].line, sizeof(_rows[n].line), "%s %4d/%+3d %*s %u",
              rxTypeLabel(e.ptype), (int)e.rssi, (int)e.snr, via_w, via, (unsigned)e.hops);
     relTime(_rows[n].time, sizeof(_rows[n].time), e.timestamp);
     _refs[n].scr = this; _refs[n].idx = n;

@@ -297,16 +297,53 @@ static bool parseMsgFrame(const uint8_t* buf, int len, bool& is_channel, int& id
   return body_pos < len;   // header must fit and leave >= 1 body byte
 }
 
+#ifdef UI_DEBUG_MESSAGES
+// Synthetic messages so the Messages page always has content to navigate
+// (msgs -> conversation -> read view) while testing the UI. Channel bodies carry
+// the "Node: " prefix like real ones; DMs are clean. Remove by dropping the
+// -D UI_DEBUG_MESSAGES build flag.
+struct DebugMsg { const char* sender; const char* body; bool is_channel; };
+static const DebugMsg DEBUG_MSGS[] = {
+  { "general", "Alice: net at 8?",              true  },
+  { "general", "Bob: copy that",                true  },
+  { "general", "Cy: gm mesh \xF0\x9F\x91\x8B",  true  },   // 👋
+  { "random",  "Dan: 73 all",                   true  },
+  { "Bob",     "hey, you around?",              false },
+  { "Bob",     "ping",                          false },
+  { "Alice",   "meet at the ridge",             false },
+};
+static const int DEBUG_MSG_N = (int)(sizeof(DEBUG_MSGS) / sizeof(DEBUG_MSGS[0]));
+#endif
+
 int MyMesh::getDisplayMsgCount() const {
   int n = 0;
   bool is_channel; int id_pos, body_pos; uint8_t txt_type;
   for (int i = 0; i < offline_queue_len; i++) {
     if (parseMsgFrame(offline_queue[i].buf, offline_queue[i].len, is_channel, id_pos, txt_type, body_pos)) n++;
   }
+#ifdef UI_DEBUG_MESSAGES
+  n += DEBUG_MSG_N;
+#endif
   return n;
 }
 
 bool MyMesh::getDisplayMsg(int display_idx, MsgView& out) {
+#ifdef UI_DEBUG_MESSAGES
+  if (display_idx >= 0 && display_idx < DEBUG_MSG_N) {  // synthetic test messages (newest)
+    const DebugMsg& m = DEBUG_MSGS[display_idx];
+    memset(&out, 0, sizeof(out));
+    snprintf(out.sender, sizeof(out.sender), "%s", m.sender);
+    snprintf(out.body, sizeof(out.body), "%s", m.body);
+    out.is_channel = m.is_channel;
+    out.is_direct  = !m.is_channel;                    // DM = direct
+    out.hops       = m.is_channel ? 2 : 0;
+    out.path_len   = m.is_channel ? 2 : 0xFF;          // channel: 2 hops; DM: 0xFF (direct)
+    out.timestamp  = getRTCClock()->getCurrentTime();
+    out.rx_timestamp = out.timestamp;
+    return true;
+  }
+  display_idx -= DEBUG_MSG_N;
+#endif
   bool is_channel; int id_pos, body_pos; uint8_t txt_type;
   for (int i = offline_queue_len - 1; i >= 0; i--) {   // newest first
     const uint8_t* buf = offline_queue[i].buf;

@@ -80,7 +80,7 @@ current page reverse-video; tall pages get a glyph scrollbar (│ track, █ thu
    (`AD/MS/CH/AK/PA/TR/RQ/RS/AR/GD/CT/MP/RW`), `-rssi/+snr`, the **last hop** (the path-hash of
    the node you actually heard — the full `getPathHashSize()` bytes, right-justified and padded
    to 3 bytes so the hop column stays aligned; the origin key/channel byte when direct; `--` when
-   the type has no identity), hop count (`2h`), and right-aligned age.
+   the type has no identity), hop count (`2`), and right-aligned age.
 5. **Radio** — `Off-grid` (client-repeat) toggle + `Off grid freq` preset (433/869/918); read-only
    `Freq`/`BW`/`SF`/`CR`/`TX` (set via the app) + live `Noise`/`RSSI`/`SNR`.
 6. **GPS** — `GPS` toggle + last-good-fix `Fix`/`Last`/`Sats`/`Pos`/`Alt`.

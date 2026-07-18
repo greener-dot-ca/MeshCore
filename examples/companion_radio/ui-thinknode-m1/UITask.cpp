@@ -19,6 +19,11 @@
 // left alone so we don't pointlessly re-render / re-encode them every FAST_REFRESH_MS.
 #define STATIC_REFRESH_MS     600000
 
+// How long the new-message popup box stays up before it auto-dismisses (any press dismisses it).
+#ifndef MSG_POPUP_MS
+  #define MSG_POPUP_MS        12000
+#endif
+
 // While the display is off, re-draw once this often to keep content current and
 // (in Full mode) re-drive every pixel to fight UV fade/ghosting. Between ticks the
 // e-ink holds its last image with no driving -- far less UV exposure than the live
@@ -207,9 +212,9 @@ void UITask::showAlert(const char* text, int duration_millis) {
 void UITask::doAdvert() {
   notify(UIEventType::ack);
   if (the_mesh.advert()) {
-    showAlert("Advert sent!", 1000);
+    showAlert("Advert sent!");
   } else {
-    showAlert("Advert failed..", 1000);
+    showAlert("Advert failed..");
   }
 }
 
@@ -309,7 +314,7 @@ void UITask::toggleOffGrid() {
     the_mesh.savePrefs();                 // nothing to restore; just persist the flag
   }
   notify(UIEventType::ack);
-  showAlert(_node_prefs->client_repeat ? "Off-grid: ON" : "Off-grid: OFF", 800);
+  showAlert(_node_prefs->client_repeat ? "Off-grid: ON" : "Off-grid: OFF");
   _next_refresh = 0;
 }
 
@@ -330,7 +335,7 @@ void UITask::cycleFreqPreset() {
   }
   char msg[28];
   snprintf(msg, sizeof(msg), "Off-grid: %.3f MHz", FREQ_PRESETS[_offgrid_preset]);
-  showAlert(msg, 1000);
+  showAlert(msg);
   _next_refresh = 0;
 }
 
@@ -514,17 +519,46 @@ void UITask::newMsg(uint8_t path_len, const char* from_name, const char* text, i
     _display->turnOn();   // light the screen/backlight on a new message (even when app-connected)
   }
 
-  // pop the newest message into the read view, then auto-return after ~10s.
-  // remember where we were (only on the first of a burst); a detail/splash
-  // screen falls back to the Messages list.
-  if (_revert_at == 0) {
-    if (onPage() && curr != _detail) { _revert_screen = curr; _revert_page = curr_page; }
-    else                             { _revert_screen = pages[PAGE_MESSAGES]; _revert_page = PAGE_MESSAGES; }
-  }
-  openMessageAt(0);   // 0 = newest (the message that just arrived); sets curr=_detail
-  _revert_at = millis() + 10000;
+  // Show the newest message as a big DOS-style popup box (sender + wrapped preview) drawn
+  // over whatever page you're on; it auto-dismisses after MSG_POPUP_MS, any press dismisses it.
+  buildMsgPopup(from_name, text);
+  _revert_at = millis() + MSG_POPUP_MS;
+  _next_refresh = 0;   // draw it now
 
   if (_display != NULL && _display->isOn()) _auto_off = millis() + AUTO_OFF_MILLIS;
+}
+
+// Wrap a new message into _mpop: line 0 = sender, lines 1.. = word-wrapped body to the box width.
+void UITask::buildMsgPopup(const char* from, const char* text) {
+  const int MAXW = 168;   // inner text width (box ww - borders/pad)
+  strncpy(_mpop[0], from ? from : "", sizeof(_mpop[0]) - 1);
+  _mpop[0][sizeof(_mpop[0]) - 1] = 0;
+  int n = 1;
+  char line[sizeof(_mpop[0])]; line[0] = 0;
+  const char* p = text ? text : "";
+  while (*p && n < MSG_POPUP_MAXLINES) {
+    while (*p == ' ') p++;
+    const char* w = p;
+    while (*p && *p != ' ') p++;
+    int wl = (int)(p - w);
+    if (wl == 0) break;
+    char word[sizeof(_mpop[0])];
+    if (wl > (int)sizeof(word) - 1) wl = sizeof(word) - 1;
+    memcpy(word, w, wl); word[wl] = 0;
+    char trial[sizeof(_mpop[0]) * 2];
+    if (line[0] == 0) snprintf(trial, sizeof(trial), "%s", word);
+    else              snprintf(trial, sizeof(trial), "%s %s", line, word);
+    if (_display && _display->getTextWidth(trial) <= MAXW && strlen(trial) < sizeof(line)) {
+      strcpy(line, trial);
+    } else {
+      if (line[0]) { strncpy(_mpop[n], line, sizeof(_mpop[n]) - 1); _mpop[n][sizeof(_mpop[n]) - 1] = 0; n++; }
+      strncpy(line, word, sizeof(line) - 1); line[sizeof(line) - 1] = 0;
+    }
+  }
+  if (line[0] && n < MSG_POPUP_MAXLINES) {
+    strncpy(_mpop[n], line, sizeof(_mpop[n]) - 1); _mpop[n][sizeof(_mpop[n]) - 1] = 0; n++;
+  }
+  _mpop_n = n;
 }
 
 void UITask::userLedHandler() {
@@ -624,44 +658,82 @@ uint32_t UITask::currentEpoch() const {
 }
 
 // A framed pop-up window with a dithered drop shadow -- old DOS/BBS dialog style,
-// drawn entirely from glyphs: a double-line box (U+2554..255D) over a cleared
-// white interior, with a U+2592 medium-shade shadow offset down-right for depth.
-static void drawDosPopup(DisplayDriver& d, const char* text) {
-  d.setTextSize(1);
-  int tw = d.getTextWidth(text);
-  int ww = ((tw + 32 + 7) / 8) * 8;           // text + 1-column pad + borders, rounded to a column
-  if (ww > 184) ww = 184;
-  const int wh = 48;                          // 3 rows: top border / text / bottom border
-  const int wx = ((d.width() - ww) / 2) & ~7; // column-aligned
-  const int wy = 64;
-
-  // Drop shadow: tile ▒ over the window rect shifted +8,+8. ww is a multiple of 8
-  // and wh of 16, so the tiling lands exactly (no overrun); the white interior
-  // then overdraws the overlap, leaving an 8px dithered strip on the right + bottom.
+// drawn entirely from glyphs: a single-line box (U+250C..2518) over a cleared white
+// interior, with a U+2592 medium-shade shadow offset down-right for depth. Popups use
+// the *single* line weight so they read as transient dialogs -- the persistent menu
+// pages wear the heavier double-line window chrome (uichrome::rule / bottomBar).
+// ww is a multiple of 8 and wh of 16 so the shadow tiling lands exactly; the white
+// interior overdraws the overlap, leaving an 8px dithered strip on the right + bottom.
+static void drawDosFrame(DisplayDriver& d, int wx, int wy, int ww, int wh, const char* title = nullptr) {
   d.setColor(DisplayDriver::LIGHT);
   for (int sy = wy + 8; sy < wy + 8 + wh; sy += 16)
     for (int sx = wx + 8; sx < wx + 8 + ww; sx += 8) { d.setCursor(sx, sy); d.print("\xE2\x96\x92"); }
-
-  // Cleared interior (white) erases the content and the shadow overlap.
   d.setColor(DisplayDriver::DARK);
   d.fillRect(wx, wy, ww, wh);
-
-  // Double-line frame.
   d.setColor(DisplayDriver::LIGHT);
-  d.setCursor(wx, wy);          d.print("\xE2\x95\x94");   // ╔
-  d.setCursor(wx, wy + 16);     d.print("\xE2\x95\x91");   // ║
-  d.setCursor(wx, wy + 32);     d.print("\xE2\x95\x9A");   // ╚
+  d.setCursor(wx, wy);                     d.print("\xE2\x94\x8C");   // ┌
+  d.setCursor(wx + ww - 8, wy);            d.print("\xE2\x94\x90");   // ┐
+  d.setCursor(wx, wy + wh - 16);           d.print("\xE2\x94\x94");   // └
+  d.setCursor(wx + ww - 8, wy + wh - 16);  d.print("\xE2\x94\x98");   // ┘
   for (int x = wx + 8; x < wx + ww - 8; x += 8) {
-    d.setCursor(x, wy);         d.print("\xE2\x95\x90");   // ═
-    d.setCursor(x, wy + 32);    d.print("\xE2\x95\x90");   // ═
+    d.setCursor(x, wy);            d.print("\xE2\x94\x80");   // ─
+    d.setCursor(x, wy + wh - 16);  d.print("\xE2\x94\x80");   // ─
   }
-  d.setCursor(wx + ww - 8, wy);       d.print("\xE2\x95\x97");   // ╗
-  d.setCursor(wx + ww - 8, wy + 16);  d.print("\xE2\x95\x91");   // ║
-  d.setCursor(wx + ww - 8, wy + 32);  d.print("\xE2\x95\x9D");   // ╝
+  for (int y = wy + 16; y < wy + wh - 16; y += 16) {
+    d.setCursor(wx, y);            d.print("\xE2\x94\x82");   // │
+    d.setCursor(wx + ww - 8, y);   d.print("\xE2\x94\x82");   // │
+  }
+  // BBS-style title bookended into the top border: ──┤ title ├──
+  if (title && title[0]) {
+    int tw = d.getTextWidth(title);
+    int seg = tw + 32;                              // ┤ + space + title + space + ├
+    if (seg <= ww - 16) {                           // fits between the corners
+      int segx = (wx + (ww - seg) / 2) & ~7;
+      d.setColor(DisplayDriver::DARK);
+      d.fillRect(segx, wy, seg, 16);                // erase the ─ under the title
+      d.setColor(DisplayDriver::LIGHT);
+      d.setCursor(segx, wy);                d.print("\xE2\x94\xA4");   // ┤
+      d.setCursor(segx + 16, wy);          d.print(title);
+      d.setCursor(segx + 16 + tw + 8, wy); d.print("\xE2\x94\x9C");   // ├
+    }
+  }
+}
 
-  // Centered text on the middle row.
+// Small centered single-line alert toast.
+static void drawDosPopup(DisplayDriver& d, const char* text) {
+  d.setTextSize(1);
+  int tw = d.getTextWidth(text);
+  int ww = ((tw + 32 + 7) / 8) * 8; if (ww > 184) ww = 184;
+  const int wh = 48, wx = ((d.width() - ww) / 2) & ~7, wy = 64;
+  drawDosFrame(d, wx, wy, ww, wh);
+  d.setColor(DisplayDriver::LIGHT);
   d.setCursor(wx + (ww - tw) / 2, wy + 16);
   d.print(text);
+}
+
+// Left-aligned new-message box: title line (sender) + wrapped body. Sizes to the message
+// -- small for a one-liner, growing to a near-full-screen 184x176 for long ones.
+static void drawMsgPopup(DisplayDriver& d, const char* const* lines, int n) {
+  d.setTextSize(1);
+  if (n < 1) return;
+  if (n > 9) n = 9;                                 // max rows that fit (with the shadow)
+  const char* title = lines[0];                     // sender -> bookended into the top border
+  const int bodyN = n - 1;                          // remaining lines = wrapped body
+  int titleW = d.getTextWidth(title);
+  int bodyW = 0;
+  for (int i = 1; i < n; i++) { int w = d.getTextWidth(lines[i]); if (w > bodyW) bodyW = w; }
+  int needT = titleW + 48;                          // ╡_title_╞ (32) + 2 corners (16)
+  int needB = bodyW + 16;                           // 2 side borders
+  int ww = ((( needT > needB ? needT : needB ) + 7) / 8) * 8;
+  if (ww > 184) ww = 184;
+  if (ww < 64)  ww = 64;
+  const int wh = (bodyN + 2) * 16;                   // title border + body rows + bottom border
+  const int wx = ((d.width() - ww) / 2) & ~7;        // centered
+  const int wy = ((d.height() - wh) / 2) & ~7;
+  drawDosFrame(d, wx, wy, ww, wh, title);
+  d.setColor(DisplayDriver::LIGHT);
+  for (int i = 0; i < bodyN; i++)
+    d.drawTextEllipsized(wx + 8, wy + 16 + i * 16, ww - 16, lines[i + 1]);
 }
 
 void UITask::loop() {
@@ -684,12 +756,12 @@ void UITask::loop() {
         setCurrScreen(_help_return ? _help_return : (UIScreen*)pages[PAGE_HOME]);
       }
     }
-  } else if (curr == _detail && _revert_at != 0) {
-    // ---- new-message popup ---- any button press dismisses it back to where the
-    // user was (instead of dropping into message navigation). A press while the
-    // screen is off only wakes it; the popup stays up until the next press.
+  } else if (_revert_at != 0) {
+    // ---- new-message popup box ---- drawn over the current page; any press just
+    // dismisses it (doesn't also act on the page underneath). A press while the
+    // screen is off only wakes it; the box stays up until the next press.
     if (ev != BUTTON_EVENT_NONE || ev2 != BUTTON_EVENT_NONE) {
-      if (!wakeIfOff()) revertFromPopup();
+      if (!wakeIfOff()) { _revert_at = 0; _next_refresh = 0; }
     }
   } else if (curr == _detail) {
     // ---- read view ---- (click + hold only)
@@ -762,9 +834,10 @@ void UITask::loop() {
     if (was_on) _revert_at = 0;               // real interaction (not a wake) cancels auto-return
   }
 
-  // auto-return from a popped-up new message to where the user was
+  // new-message popup box times out -> clear it; the underlying page stays put
   if (_revert_at != 0 && millis() > _revert_at) {
-    revertFromPopup();
+    _revert_at = 0;
+    _next_refresh = 0;   // repaint to erase the box
   }
 
   userLedHandler();
@@ -810,9 +883,15 @@ void UITask::loop() {
 
       _display->startFrame();
       int delay_millis = curr->render(*_display);
-      if (!asleep && millis() < _alert_expiry) {  // DOS/BBS-style pop-up (awake only)
+      if (!asleep && millis() < _alert_expiry) {  // DOS/BBS-style alert toast (awake only)
         drawDosPopup(*_display, _alert);
         _next_refresh = _alert_expiry;
+      } else if (!asleep && _revert_at != 0) {    // big new-message popup box
+        const char* ml[MSG_POPUP_MAXLINES];
+        int mn = _mpop_n < MSG_POPUP_MAXLINES ? _mpop_n : MSG_POPUP_MAXLINES;
+        for (int i = 0; i < mn; i++) ml[i] = _mpop[i];
+        drawMsgPopup(*_display, ml, mn);
+        _next_refresh = _revert_at;
       } else if (asleep) {
         _next_refresh = _idle_refresh_at;   // stay dark until the next minute re-draw
       } else {
@@ -838,10 +917,9 @@ void UITask::loop() {
       if (!board.isExternalPowered()) {
         if (_display != NULL) {
           _display->startFrame();
-          _display->setTextSize(1);
-          _display->setColor(DisplayDriver::RED);
-          _display->drawTextCentered(_display->width() / 2, 16, "Low Battery.");
-          _display->drawTextCentered(_display->width() / 2, 32, "Shutting Down!");
+          if (curr) curr->render(*_display);          // keep the page behind the modal
+          const char* ml[2] = { "Low Battery", "Shutting down..." };
+          drawMsgPopup(*_display, ml, 2);             // as a popup window (title + body)
           _display->endFrame();
           if (_display->isEink() == false) { delay(3000); }
         }
@@ -880,7 +958,7 @@ void UITask::toggleGPS() {
           notify(UIEventType::ack);
         }
         the_mesh.savePrefs();
-        showAlert(_node_prefs->gps_enabled ? "GPS: Enabled" : "GPS: Disabled", 800);
+        showAlert(_node_prefs->gps_enabled ? "GPS: Enabled" : "GPS: Disabled");
         _next_refresh = 0;
         break;
       }
@@ -898,7 +976,7 @@ void UITask::toggleBuzzer() {
   }
   _node_prefs->buzzer_quiet = buzzer.isQuiet();
   the_mesh.savePrefs();
-  showAlert(buzzer.isQuiet() ? "Buzzer: OFF" : "Buzzer: ON", 800);
+  showAlert(buzzer.isQuiet() ? "Buzzer: OFF" : "Buzzer: ON");
   _next_refresh = 0;
 #endif
 }

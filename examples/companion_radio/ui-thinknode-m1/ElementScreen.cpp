@@ -24,14 +24,11 @@ void uiFormatClock(NodePrefs* p, uint32_t epoch, char* out, size_t n) {
 
 void uiFormatDateTime(NodePrefs* p, uint32_t epoch, char* out, size_t n) {
   if (epoch == 0) { strncpy(out, "--", n); out[n - 1] = 0; return; }
-  static const char* const mon[] = {"Jan","Feb","Mar","Apr","May","Jun",
-                                    "Jul","Aug","Sep","Oct","Nov","Dec"};
   uint32_t local = (uint32_t)((int64_t)epoch + (int64_t)(p ? p->utc_offset_min : 0) * 60);
   DateTime dt(local);
-  int mo = dt.month();
   char t[12];
   fmtTimePart(p, dt, t, sizeof(t));
-  snprintf(out, n, "%s %d %s", (mo >= 1 && mo <= 12) ? mon[mo - 1] : "?", dt.day(), t);
+  snprintf(out, n, "%02d/%02d %s", dt.month(), dt.day(), t);   // mm/dd HH:MM (compact)
 }
 
 #ifndef BATT_MIN_MILLIVOLTS
@@ -153,80 +150,8 @@ bool ElementScreen::handleInput(char c) {
   return false;
 }
 
-// Battery level as a single Block-Elements glyph (▁..█, U+2581..2588): a one-char
-// fuel gauge whose right edge sits at `right`. Returns its left x (the bolt's, when
-// charging). The eighth-blocks are 3-byte UTF-8 E2 96 (80+level).
-int ElementScreen::drawBattery(DisplayDriver& d, int right) {
-  uint16_t mv = _task->getBattMilliVolts();
-  int pct = ((int)mv - BATT_MIN_MILLIVOLTS) * 100 / (BATT_MAX_MILLIVOLTS - BATT_MIN_MILLIVOLTS);
-  if (pct < 0) pct = 0;
-  if (pct > 100) pct = 100;
-  int level = (pct * 8 + 50) / 100;          // 0..8 eighths, rounded
-  if (level < 1) level = 1;                  // always show at least the 1/8 sliver
-  if (level > 8) level = 8;
-
-  char blk[4] = { (char)0xE2, (char)0x96, (char)(0x80 + level), 0 };
-  int w = d.getTextWidth(blk);
-  d.setColor(DisplayDriver::GREEN);
-  d.setCursor(right - w, 0);
-  d.print(blk);
-  int left = right - w;
-
-  if (board.isExternalPowered()) {           // charging: ⚡ left of the gauge
-    const char* bolt = "\xE2\x9A\xA1";        // U+26A1
-    int bw = d.getTextWidth(bolt);
-    d.setColor(DisplayDriver::GREEN);
-    d.setCursor(left - bw, 0);
-    d.print(bolt);
-    left -= bw;
-  }
-  return left;
-}
-
-void ElementScreen::drawStatusBar(DisplayDriver& d) {
-  d.setTextSize(1);
-  const int ty = 0;   // row 0
-
-  // right side: clock (rightmost), then battery (+charge bolt) to its left. Every
-  // item is a whole number of 8px columns and the clock's right edge is the panel
-  // edge (200), so column-adjacent placement keeps the whole cluster on the grid.
-  char clk[12];
-  uiFormatClock(_prefs, _task->currentEpoch(), clk, sizeof(clk));
-  int cw = d.getTextWidth(clk);
-  d.setColor(DisplayDriver::LIGHT);
-  d.drawTextRightAlign(d.width(), ty, clk);
-  int x = drawBattery(d, d.width() - cw);        // returns left edge of battery (or bolt)
-
-  // status icons (BLE-off / app / GPS / muted) as Unifont symbols, right-justified before battery
-  const char* icons[4]; DisplayDriver::Color col[4]; int ni = 0;
-  if (_task->isCLIRescue()) {                    // in CLI rescue the companion link is suspended:
-    icons[ni] = "\xF0\x9F\x94\xA7"; col[ni] = DisplayDriver::RED; ni++; // 🔧 show that, not a false "connected"
-  } else {
-    if (!_task->isSerialEnabled()) { icons[ni] = "\xF0\x9F\x93\xB5"; col[ni] = DisplayDriver::RED; ni++; } // 📵 BLE off
-    if (_task->hasConnection()) { icons[ni] = "\xF0\x9F\x93\xB1"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📱
-  }
-  if (_task->getGPSState())   { icons[ni] = "\xF0\x9F\x93\x8D"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📍
-#ifdef PIN_BUZZER
-  if (_task->isBuzzerQuiet())  { icons[ni] = "\xF0\x9F\x94\x87"; col[ni] = DisplayDriver::RED;  ni++; } // 🔇
-#endif
-  for (int i = ni - 1; i >= 0; i--) {            // place right-to-left, column-adjacent
-    x -= d.getTextWidth(icons[i]);
-    d.setColor(col[i]);
-    d.setCursor(x, ty);
-    d.print(icons[i]);
-  }
-
-  // left side: title
-  char title[24];
-  d.translateUTF8ToBlocks(title, _title ? _title : "", sizeof(title));
-  d.setColor(DisplayDriver::GREEN);
-  d.setCursor(0, ty);
-  d.print(title);
-
-}
-
-// Bottom bar: one glyph per page (in PAGE_* order), the current page shown
-// reverse-video. Keep this array in sync with the enum in Pages.h.
+// Bottom bar: one glyph per page (in PAGE_* order), the current page reverse-video.
+// Keep this array in sync with the enum in Pages.h.
 static const char* const PAGE_ICONS[] = {
   "\xF0\x9F\x8F\xA0",   // PAGE_HOME       🏠 house
   "\xE2\x9C\x89",       // PAGE_MESSAGES   ✉ envelope
@@ -241,24 +166,144 @@ static const char* const PAGE_ICONS[] = {
   "\xE2\x8F\xBB",       // PAGE_SHUTDOWN   ⏻ power
 };
 
-void ElementScreen::drawPageDots(DisplayDriver& d) {
-  int n = pageCount();
+// ---- shared window chrome (see ElementScreen.h) ----
+namespace uichrome {
+
+static const int PANEL_H       = 200;
+static const int USABLE_BOTTOM = 192;   // 12 full 16px rows on the 200px panel
+static const int DOTS_H        = 16;
+static const int VPAD          = (PANEL_H - USABLE_BOTTOM) / 2;   // 4: center the grid
+
+int frameTop()      { return VPAD; }                          // row 0
+int frameBottom()   { return VPAD + USABLE_BOTTOM - DOTS_H; }  // row 11 (180)
+int contentTop()    { return frameTop() + 16; }               // row 1 (20)
+int contentBottom() { return frameBottom(); }                 // 180
+
+// Battery level as a single Block-Elements glyph (▁..█): a one-char fuel gauge whose
+// right edge sits at `right`; returns its left x (the bolt's when charging).
+static int drawBattery(DisplayDriver& d, UITask* task, int right) {
+  uint16_t mv = task->getBattMilliVolts();
+  int pct = ((int)mv - BATT_MIN_MILLIVOLTS) * 100 / (BATT_MAX_MILLIVOLTS - BATT_MIN_MILLIVOLTS);
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  int level = (pct * 8 + 50) / 100;
+  if (level < 1) level = 1;
+  if (level > 8) level = 8;
+  const int y = frameTop();
+  char blk[4] = { (char)0xE2, (char)0x96, (char)(0x80 + level), 0 };
+  int w = d.getTextWidth(blk);
+  int left = right - w;
+  d.setColor(DisplayDriver::GREEN);
+  d.setCursor(left, y);
+  d.print(blk);
+  if (board.isExternalPowered()) {               // charging: ⚡ left of the gauge
+    const char* bolt = "\xE2\x9A\xA1";            // U+26A1
+    int bw = d.getTextWidth(bolt);
+    d.setColor(DisplayDriver::GREEN);
+    d.setCursor(left - bw, y);
+    d.print(bolt);
+    left -= bw;
+  }
+  return left;
+}
+
+int statusCluster(DisplayDriver& d, UITask* task, NodePrefs* prefs) {
+  d.setTextSize(1);
+  const int ty = frameTop();
+  const int anchor = d.width();                  // clock right edge = panel edge
+  char clk[12];
+  uiFormatClock(prefs, task->currentEpoch(), clk, sizeof(clk));
+  int cw = d.getTextWidth(clk);
+  d.setColor(DisplayDriver::LIGHT);
+  d.drawTextRightAlign(anchor, ty, clk);
+  int x = drawBattery(d, task, anchor - cw);     // left edge of battery (or bolt)
+
+  const char* icons[4]; DisplayDriver::Color col[4]; int ni = 0;
+  if (task->isCLIRescue()) {                      // rescue: companion link suspended
+    icons[ni] = "\xF0\x9F\x94\xA7"; col[ni] = DisplayDriver::RED; ni++;   // 🔧
+  } else {
+    if (!task->isSerialEnabled()) { icons[ni] = "\xF0\x9F\x93\xB5"; col[ni] = DisplayDriver::RED; ni++; }   // 📵
+    if (task->hasConnection())    { icons[ni] = "\xF0\x9F\x93\xB1"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📱
+  }
+  if (task->getGPSState())        { icons[ni] = "\xF0\x9F\x93\x8D"; col[ni] = DisplayDriver::LIGHT; ni++; } // 📍
+#ifdef PIN_BUZZER
+  if (task->isBuzzerQuiet())      { icons[ni] = "\xF0\x9F\x94\x87"; col[ni] = DisplayDriver::RED;  ni++; }  // 🔇
+#endif
+  for (int i = ni - 1; i >= 0; i--) {            // right-to-left, column-adjacent
+    x -= d.getTextWidth(icons[i]);
+    d.setColor(col[i]);
+    d.setCursor(x, ty);
+    d.print(icons[i]);
+  }
+  return x;                                       // left edge of the whole cluster
+}
+
+// Truncate a UTF-8 title to <= maxw px, appending an ellipsis if it doesn't fit.
+static void fitTitle(DisplayDriver& d, const char* src, int maxw, char* dst, size_t cap) {
+  strncpy(dst, src, cap - 1); dst[cap - 1] = 0;
+  if ((int)d.getTextWidth(dst) <= maxw) return;
+  const char* ell = "\xE2\x80\xA6";              // …
+  int ew = d.getTextWidth(ell);
+  size_t len = strlen(dst);
+  while (len > 0) {
+    size_t nl = len - 1;
+    while (nl > 0 && ((unsigned char)dst[nl] & 0xC0) == 0x80) nl--;   // step back a codepoint
+    dst[nl] = 0; len = nl;
+    if ((int)d.getTextWidth(dst) + ew <= maxw) break;
+  }
+  if (len + strlen(ell) < cap) strcat(dst, ell);
+}
+
+// Draw a horizontal rule at row `y` with an optional ╡ title ╞ bookended into it,
+// ellipsized to end by `max_right`. `horiz`/`lcap`/`rcap` pick the line weight:
+// double (═ ╡ ╞) for the persistent page chrome, single (─ ┤ ├) for the lighter detail.
+static void ruleImpl(DisplayDriver& d, int y, const char* title, int max_right,
+                     const char* horiz, const char* lcap, const char* rcap) {
+  d.setTextSize(1);
+  d.setColor(DisplayDriver::LIGHT);
+  for (int x = 0; x < max_right; x += 8) { d.setCursor(x, y); d.print(horiz); }
+  if (!title || !title[0]) return;
+  const int segx = 8;                            // 1-column lead-in (tight)
+  int avail = max_right - segx - 32;             // cap + space + title + space + cap
+  if (avail < 8) return;
+  char t[48];
+  fitTitle(d, title, avail, t, sizeof(t));
+  int tw = d.getTextWidth(t);
+  int seg = tw + 32;
+  d.setColor(DisplayDriver::DARK);
+  d.fillRect(segx, y, seg, 16);                  // erase the rule under the title
+  d.setColor(DisplayDriver::GREEN);
+  d.setCursor(segx, y);                d.print(lcap);
+  d.setCursor(segx + 16, y);           d.print(t);      // UTF-8 (Unifont) title
+  d.setCursor(segx + 16 + tw + 8, y);  d.print(rcap);
+}
+
+void rule(DisplayDriver& d, int y, const char* title, int max_right) {
+  ruleImpl(d, y, title, max_right, "\xE2\x95\x90", "\xE2\x95\xA1", "\xE2\x95\x9E");   // ═ ╡ ╞
+}
+
+void ruleThin(DisplayDriver& d, int y, const char* title, int max_right) {
+  ruleImpl(d, y, title, max_right, "\xE2\x94\x80", "\xE2\x94\xA4", "\xE2\x94\x9C");   // ─ ┤ ├
+}
+
+void bottomBar(DisplayDriver& d, int cur_page, int page_count) {
+  const int y = frameBottom();
+  rule(d, y, nullptr, d.width());                // ═ across the whole bottom rule
+  int n = page_count;
   if (n <= 1) return;
   const int NICONS = (int)(sizeof(PAGE_ICONS) / sizeof(PAGE_ICONS[0]));
   if (n > NICONS) n = NICONS;
-  int cur = pageIndex();
   d.setTextSize(1);
-  const int y = USABLE_BOTTOM - 16;            // row 11
-  // Column-adjacent (gap 0); each icon is a whole number of columns, so snapping
-  // the start to a column boundary keeps every icon on the grid.
   int total = 0;
   for (int i = 0; i < n; i++) total += d.getTextWidth(PAGE_ICONS[i]);
   int x = ((d.width() - total) / 2) & ~(GRID_COL - 1);
   if (x < 0) x = 0;
+  d.setColor(DisplayDriver::DARK);               // clear the ═ behind the icon strip
+  d.fillRect(x, y, total, 16);
   for (int i = 0; i < n; i++) {
     const char* g = PAGE_ICONS[i];
     int gw = d.getTextWidth(g);
-    if (i == cur) {                             // reverse-video: white glyph on a black cell
+    if (i == cur_page) {                          // reverse-video: white glyph on a black cell
       d.setColor(DisplayDriver::LIGHT);
       d.fillRect(x, y, gw, 16);
       d.setColor(DisplayDriver::DARK);
@@ -271,16 +316,17 @@ void ElementScreen::drawPageDots(DisplayDriver& d) {
   }
 }
 
-// TUI-style scrollbar: a column of glyphs at the right edge -- light vertical
-// bars for the track, full blocks for the thumb (no drawn rectangles).
+}  // namespace uichrome
+
+// Trackless scrollbar in the reserved last column: a full-block (█) thumb marks the
+// scroll position. There's no track line -- the window has no sides -- but the reserved
+// column means content never reflows when the thumb appears.
 void ElementScreen::drawScrollbar(DisplayDriver& d) {
   int top = contentTop(), vp = viewportH(), ch = contentHeight();
   if (ch <= vp) return;
-  static const char* const TRACK = "\xE2\x94\x82";   // │ U+2502
   static const char* const THUMB = "\xE2\x96\x88";   // █ U+2588
   d.setTextSize(1);
-  int gw = d.getTextWidth(TRACK);
-  int x = d.width() - gw;
+  int x = d.width() - 8;                              // the reserved last column
   int cells = vp / 16;                               // 16px glyph rows in the viewport
   if (cells < 1) cells = 1;
   int thumb_cells = cells * vp / ch;
@@ -288,9 +334,9 @@ void ElementScreen::drawScrollbar(DisplayDriver& d) {
   int max_off = ch - vp;
   int thumb_start = (max_off > 0) ? (_scroll_y * (cells - thumb_cells) + max_off / 2) / max_off : 0;
   d.setColor(DisplayDriver::LIGHT);
-  for (int i = 0; i < cells; i++) {
+  for (int i = thumb_start; i < thumb_start + thumb_cells && i < cells; i++) {
     d.setCursor(x, top + i * 16);
-    d.print((i >= thumb_start && i < thumb_start + thumb_cells) ? THUMB : TRACK);
+    d.print(THUMB);                                   // overdraw the rail with the thumb
   }
 }
 
@@ -298,15 +344,17 @@ int ElementScreen::render(DisplayDriver& d) {
   rebuild();
   if (_focus >= _count) _focus = (_count > 0) ? _focus % _count : -1;
 
-  drawStatusBar(d);
+  int cluster_left = uichrome::statusCluster(d, _task, _prefs);   // cluster on the right of the top rule
+  uichrome::rule(d, uichrome::frameTop(), _title, cluster_left);  // top rule + bookended title
 
   const int top = contentTop();
   const int vp = viewportH();
   const bool hasSB = contentHeight() > vp;
-  // Content uses every column from the first (x=0) to the last-but-one; the final
-  // column is always reserved for the scrollbar, so nothing reflows when it
-  // appears and the scrollbar never lands on the selection bar.
-  const int cw = d.width() - GRID_COL;
+  // No side rails: content spans from the far-left column. The last column is reserved for
+  // the scrollbar thumb so nothing reflows when it appears (the thumb floats there without
+  // a track, since the sides of the window are gone).
+  const int cx = 0;
+  const int cw = d.width() - GRID_COL;             // reserve the last column for the thumb
 
   for (int i = 0; i < _count; i++) {
     int et = elemTop(i);
@@ -317,13 +365,13 @@ int ElementScreen::render(DisplayDriver& d) {
     bool foc = _show_focus && i == _focus;
     if (foc) {                                // reverse-video selection bar (content columns)
       d.setColor(DisplayDriver::LIGHT);
-      d.fillRect(0, ey, cw, eh);
+      d.fillRect(cx, ey, cw, eh);
     }
-    _elems[i].draw(d, 0, ey, cw, foc);
+    _elems[i].draw(d, cx, ey, cw, foc);
   }
 
   if (hasSB) drawScrollbar(d);
-  drawPageDots(d);
+  uichrome::bottomBar(d, pageIndex(), pageCount());
 
   // Wake to re-render on a cadence so time-varying fields (uptime, message
   // relative ages) stay current: faster on USB, slower on battery. endFrame()

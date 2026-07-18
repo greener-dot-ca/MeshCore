@@ -149,6 +149,7 @@ private:
   Level _level = L_CONV;
   bool  _sel_is_channel = false;        // type of the selected conversation
   char  _sel_conv[32] = {0};            // selected channel or contact name
+  char  _crumb[40] = {0};               // dynamic title: "Msgs" / "‹ #general" (depth chevron)
   // At L_CONV, _refs[i].idx indexes these per-row keys; at L_MSGS, _refs[i].idx
   // is the absolute display index for getDisplayMsg/openDetail.
   char  _key_name[MSG_PAGE_MAX][32];
