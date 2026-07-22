@@ -79,11 +79,16 @@ current page reverse-video; tall pages get a glyph scrollbar (│ track, █ thu
 4. **RX Log** — live per-packet log (newest first) in fixed columns: 2-char type
    (`AD/MS/CH/AK/PA/TR/RQ/RS/AR/GD/CT/MP/RW`), `-rssi/+snr`, the **last hop** (the path-hash of
    the node you actually heard — the full `getPathHashSize()` bytes, right-justified and padded
-   to 3 bytes so the hop column stays aligned; the origin key/channel byte when direct; `--` when
-   the type has no identity), hop count (`2`), and right-aligned age.
-5. **Radio** — `Off-grid` (client-repeat) toggle + `Off grid freq` preset (433/869/918); read-only
-   `Freq`/`BW`/`SF`/`CR`/`TX` (set via the app) + live `Noise`/`RSSI`/`SNR`.
-6. **GPS** — `GPS` toggle + last-good-fix `Fix`/`Last`/`Sats`/`Pos`/`Alt`.
+   to 3 bytes so the hop column stays aligned). Only **flood** packets carry the transmitter
+   (each relay appends its hash); a 0-hop flood shows the origin's key/channel byte. **Direct**-
+   routed packets don't record the transmitter (their path is a forward route), so they show `--`,
+   as do types with no identity. Then hop count (`2`) and right-aligned age.
+5. **Radio** — `Off-grid` (client-repeat) toggle + read-only `Off grid freq` (433/869/918,
+   band-locked to the node's operating band — the RF front-end is tuned for one band and
+   can't be probed, so an off-band preset is never offered); read-only `Freq`/`BW`/`SF`/`CR`/`TX`
+   (set via the app) + live `Noise`/`RSSI`/`SNR`.
+6. **GPS** — read-only last-good-fix `Fix`/`Last`/`Sats`/`Pos`/`Alt` (the M1's physical switch
+   controls the receiver; the 📍 status icon reflects it).
 7. **Nav** — `Target` (cycles located favourite contacts), `Dist`, `Brg`, `Speed`, `ETA`, plus a
    glyph compass: **heading-up while moving** (rose rotates to GPS course; centre arrow points the
    way to turn), **north-up when stopped** (the M1 has no magnetometer). `?`/`--` without a fix or

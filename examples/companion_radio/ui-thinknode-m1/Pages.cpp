@@ -203,8 +203,12 @@ static void shareQRCb(const UIElement& e)   { T(e)->showQR(); }   // Home name -
 static bool offGridGet(const UIElement& e)    { return T(e)->getOffGrid(); }
 static void offGridToggle(const UIElement& e) { T(e)->toggleOffGrid(); }
 static const char* const freqOpts[] = { "433", "869", "918" };
-static int  freqGet(const UIElement& e)  { return T(e)->getFreqPreset(); }
-static void freqNext(const UIElement& e) { T(e)->cycleFreqPreset(); }
+// Read-only: the off-grid band is locked to the node's operating band (the RF front-end is
+// tuned for one band and can't be probed), so we show it rather than let it be mis-set.
+static const char* freqBandText(const UIElement& e) {
+  int i = T(e)->getFreqPreset();
+  return (i >= 0 && i < (int)(sizeof(freqOpts) / sizeof(freqOpts[0]))) ? freqOpts[i] : "?";
+}
 
 // ----- Radio settings getters (read-only; the actual tuned LoRa params, set via
 // the app -- the on-device controls are the Off-grid toggle + freq preset above) -----
@@ -337,12 +341,12 @@ MeshScreen::MeshScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, pre
 }
 
 // ============================================================ RadioScreen
-// RF config + link readings. The Off-grid client-repeat toggle and the 433/869/918
-// MHz preset (moved off the Mesh page) are the only editable controls; the LoRa
-// params below are read-only mirrors of the app-side config.
+// RF config + link readings. The Off-grid client-repeat toggle is the only editable
+// control; the off-grid band is band-locked (read-only) to the node's operating band,
+// and the LoRa params below are read-only mirrors of the app-side config.
 RadioScreen::RadioScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "Radio") {
   _items[0] = makeToggle("Off-grid", task, offGridGet, offGridToggle);   // client-repeat / relay
-  _items[1] = makeCycle("Off grid freq", task, freqOpts, 3, freqGet, freqNext);  // 433/869/918 MHz preset
+  _items[1] = makeLabel("Off grid freq", freqBandText, task);   // band-locked to the operating band
   _items[2] = makeLabel("Freq", freqText, task);
   _items[3] = makeLabel("BW",   bwText,   task);
   _items[4] = makeLabel("SF",   sfText,   task);
@@ -356,13 +360,14 @@ RadioScreen::RadioScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, p
 
 // ============================================================ GPSScreen
 GPSScreen::GPSScreen(UITask* task, NodePrefs* prefs) : ElementScreen(task, prefs, "GPS") {
-  _items[0] = makeToggle("GPS",  task, gpsGet, gpsToggle);
-  _items[1] = makeLabel("Fix",   gpsFixText,     task);
-  _items[2] = makeLabel("Last",  gpsLastFixText, task);
-  _items[3] = makeLabel("Sats",  gpsSatsText,    task);
-  _items[4] = makeLabel("Pos",   gpsLatLonText,  task);
-  _items[5] = makeLabel("Alt",   gpsAltText,     task);
-  _elems = _items; _count = 6;
+  // No software GPS toggle -- the M1's physical switch controls the receiver; this page is
+  // read-only fix info (the 📍 status-bar icon still reflects on/off state).
+  _items[0] = makeLabel("Fix",   gpsFixText,     task);
+  _items[1] = makeLabel("Last",  gpsLastFixText, task);
+  _items[2] = makeLabel("Sats",  gpsSatsText,    task);
+  _items[3] = makeLabel("Pos",   gpsLatLonText,  task);
+  _items[4] = makeLabel("Alt",   gpsAltText,     task);
+  _elems = _items; _count = 5;
 }
 
 // ============================================================ NavScreen
@@ -931,13 +936,17 @@ RxLogScreen::RxLogScreen(UITask* task, NodePrefs* prefs)
 // Rebuilt every render from MyMesh's rx_log ring (newest first). Each row is a set
 // of fixed-width columns (Unifont is monospace, so printf padding lines them up):
 // "TY -rss/+sn LH  Hh" with the relative age right-aligned (re-rendered each
-// refresh, so the ages stay current). LH = the last hop: the full path hash of the
-// node whose transmission we actually heard. A hop is hop_bytes wide (the network's
-// path-hash-size setting, 1..4 bytes), so we print the last hop_bytes of via[] as
-// one contiguous fingerprint -- "FE" on a 1-byte network, "EEEEFE" on a 3-byte one,
-// always a single relay. The hops column carries the full path length. Direct from
-// the origin (0 hops): the origin's key byte / channel hash. "--" when the type
-// carries no identity at all (direct ACK etc).
+// refresh, so the ages stay current). LH = the last hop: the path hash of the node
+// whose transmission we actually heard.
+//
+// Only FLOOD packets carry this: each relay appends its own hash to the end of the
+// path, so the last hop_bytes of via[] is the node that just keyed up. Printed as one
+// contiguous fingerprint -- "FE" on a 1-byte network, "EEEEFE" on a 3-byte one. A
+// 0-hop flood is heard straight from the origin: its key/channel byte. DIRECT-routed
+// packets do NOT record the transmitter (their path is a forward route consumed hop by
+// hop, and the sender already popped itself), so the emitter is unknown -> "--". Also
+// "--" when the type carries no identity at all (ACK etc). The hops column is the path
+// length.
 void RxLogScreen::rebuild() {
   static RxLogEntry rx[RX_LOG_SIZE];                   // transient scratch (single-threaded)
   int got = the_mesh.getRxLog(rx, RX_LOG_SIZE);
@@ -949,13 +958,13 @@ void RxLogScreen::rebuild() {
     int hb = e.hop_bytes ? e.hop_bytes : 1;                   // path hash size: bytes per hop
     int nb = (e.via_len < hb) ? e.via_len : hb;               // the last hop = its whole hash
     char via[12];
-    if (nb > 0) {
-      char* p = via;
+    if (e.flood && nb > 0) {
+      char* p = via;                                          // flood relay: last hash = node we heard
       for (int k = e.via_len - nb; k < e.via_len; k++) p += sprintf(p, "%02X", e.via[k]);
-    } else if (e.key0 >= 0) {
-      sprintf(via, "%02X", (unsigned)e.key0);                 // straight from the origin (0 hops)
+    } else if (e.flood && e.key0 >= 0) {
+      sprintf(via, "%02X", (unsigned)e.key0);                 // 0-hop flood: heard the origin directly
     } else {
-      strcpy(via, "--");
+      strcpy(via, "--");                                      // direct route (emitter not in packet), or no identity
     }
     snprintf(_rows[n].line, sizeof(_rows[n].line), "%s %4d/%+3d %*s %u",
              rxTypeLabel(e.ptype), (int)e.rssi, (int)e.snr, via_w, via, (unsigned)e.hops);
